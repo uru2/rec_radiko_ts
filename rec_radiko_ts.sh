@@ -130,7 +130,7 @@ if [ -z "${totime}" ] && [ -z "${duration}" ]; then
   exit 1
 fi
 
-# Calculate fromtime (-d option)
+# Calculate totime (-d option)
 # **TODO**
 
 # Create work path
@@ -258,8 +258,9 @@ ffmpeg \
     -fflags +discardcorrupt \
     -headers "X-Radiko-Authtoken: ${authtoken}" \
     -i "${playlist}" \
+    -acodec copy \
     -vn \
-    -bsf aac_adtstoasc \
+    -bsf:a aac_adtstoasc \
     "${output}"
 
 if [ $? -ne 0 ]; then
