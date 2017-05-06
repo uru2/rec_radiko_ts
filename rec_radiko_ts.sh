@@ -28,11 +28,12 @@ auth1_fms="${work_path}/${pid}_auth1_fms"
 #######################################
 show_usage() {
   cat << _EOT_
-Usage: `basename $0` -s STATION -f DATETIME [options]
+Usage: `basename $0` -s STATION -f DATETIME (-t DATETIME or -d MINUTE) [options]
 Options:
   -s STATION      Station ID (see http://radiko.jp/v3/station/region/full.xml)
-  -f DATETIME     Record start datetime (%Y%m%d%H%M format)
-  -t DATETIME     Record end datetime (%Y%m%d%H%M format)
+  -f DATETIME     Record start datetime (%Y%m%d%H%M format, JST)
+  -t DATETIME     Record end datetime (%Y%m%d%H%M format, JST)
+  -d MINUTE       Record minute
   -m ADDRESS      Radiko premium mail address
   -p PASSWORD     Radiko premium password
   -o FILEPATH     Output file path
@@ -63,6 +64,136 @@ finalize() {
   # Remove temporary files
   rm -f "${cookie}"
   rm -f "${auth1_fms}"
+}
+
+#######################################
+# Convert UNIX time
+# Arguments:
+#   datetime string (%Y%m%d%H%M format)
+# Returns:
+#   0: Success
+#   1: Failure
+#######################################
+to_unixtime() {
+  if [ $# -ne 1 ]; then
+    echo -1
+    return 1
+  fi
+
+  utime=`echo "$1" \
+    | awk '{
+      date_str = $1;
+
+      if (match(date_str, /[^0-9]/)) {
+        # Invalid character
+        print -1;
+        exit;
+      }
+
+      if (length(date_str) != 12) {
+        # Invalid length
+        print -1;
+        exit;
+      }
+
+      # Split datetime parts
+      year = substr(date_str, 1, 4) - 0;
+      month = substr(date_str, 5, 2) - 0;
+      day = substr(date_str, 7, 2) - 0;
+      hour = substr(date_str, 9, 2) - 0;
+      minute = substr(date_str, 11, 2) - 0;
+      second = 0;
+
+      # Validation parts
+      if ((year < 1970) || (month < 1) || (month > 12) || (hour < 0) || (hour > 23) \
+        || (minute < 0) || (minute > 59) || (second < 0) || (second > 59)) {
+        print -1;
+        exit;
+      }
+      split("31 0 31 30 31 30 31 31 30 31 30 31", days_of_month);
+      days_of_month[2] = (year % 4 != 0) ? 28 : (year % 100 != 0) ? 29 : (year % 400 != 0) ? 28 : 29;
+      if (day > days_of_month[month]) {
+        print -1;
+        exit;
+      }
+
+      # To UNIX time
+      if (month < 3) {
+        month+= 12;
+        year--;
+      }
+      tz_offset = 32400;  # JST(UTC+9)
+      utime = (365 * year + int(year / 4) - int(year / 100) + int(year / 400) + int(306 * (month + 1) / 10) - 428 + day - 719163) \
+                * 86400 + (hour * 3600) + (minute * 60) + second - tz_offset;
+      print utime;
+      exit;
+    }'`
+
+  echo "${utime}"
+  if [ ${utime} -eq -1 ]; then
+    return 1
+  fi
+  return 0
+}
+
+#######################################
+# UNIX time to datetime string
+# Arguments:
+#   UNIX time
+# Returns:
+#   0: Success
+#   1: Failure
+#######################################
+to_datetime() {
+  if [ $# -ne 1 ]; then
+    echo ""
+    return -1
+  fi
+
+  datetime=`echo "$1" \
+    | awk '{
+      ut = $0 + 32400;  # JST(UTC+9)
+
+      # hour, minute, second
+      tm = ut;
+      second = tm % 60;
+      tm = int(tm / 60);
+      minute = tm % 60;
+      tm = int(tm / 60);
+      hour = int(tm % 24);
+
+      # year, month, day
+      year = 1970;
+      left_days = int(ut / 86400) + 1;
+      while (left_days > 0) {
+        is_leap = (((year) % 4) == 0 && (((year) % 100) != 0 || ((year) % 400) == 0));
+        year_days = (is_leap == 0) ? 365 : 366;
+        if (left_days > year_days) {
+          year++;
+          left_days -= year_days;
+          continue;
+        }
+
+        split("31 28 31 30 31 30 31 31 30 31 30 31", days_of_month);
+        days_of_month[2] = (is_leap == 0) ? 28 : 29;
+        month = 1;
+        day = 0;
+        for (i = 1; i <= 12; i++) {
+          if (days_of_month[i] >= left_days) {
+            day = left_days;
+            left_days = 0;
+            break;
+          }
+          left_days -= days_of_month[i];
+          month++;
+        }
+      }
+
+      printf("%04d%02d%02d%02d%02d", year, month, day, hour, minute);
+    }'`
+
+  echo "${datetime}"
+  return 0
 }
 
 # Define argument values
@@ -113,25 +244,62 @@ while getopts s:f:t:d:m:p:o: option; do
   esac
 done
 
+# Convert to UNIX time
+utime_from=`to_unixtime "${fromtime}"`
+utime_to=0
+if [ ! -z "${totime}" ]; then
+  utime_to=`to_unixtime "${totime}"`
+fi
+
 # Check argument parameter
 if [ -z "${station_id}" ]; then
+  # -s value is empty
   echo "Require \"Station ID\"" >&2
   finalize
   exit 1
 fi
 if [ -z "${fromtime}" ]; then
+  # -f value is empty
   echo "Require \"Record start datetime\"" >&2
   finalize
   exit 1
 fi
+if [ ${utime_from} -lt 0 ]; then
+  # -f value is empty
+  echo "Invalid \"Record start datetime\" format" >&2
+  finalize
+  exit 1
+fi
 if [ -z "${totime}" ] && [ -z "${duration}" ]; then
+  # -t value and -d value are empty
   echo "Require \"Record end datetime\" or \"Record minutes\"" >&2
+  finalize
+  exit 1
+fi
+if [ ${utime_to} -lt 0 ]; then
+  # -t value is invalid
+  echo "Invalid \"Record end datetime\" format" >&2
+  finalize
+  exit 1
+fi
+if [ ! -z "${duration}" ] && [ -z "`echo \"${duration}\" | awk '/^[0-9]+$/ {print $0}'`" ]; then
+  # -d value is invalid
+  echo "Invalid \"Record minute\"" >&2
   finalize
   exit 1
 fi
 
 # Calculate totime (-d option)
-# **TODO**
+if [ ! -z "${duration}" ]; then
+  utime_to1=${utime_to}
+  utime_to2=`expr ${utime_from} + \( ${duration} \* 60 \)`
+
+  if [ ${utime_to1} -lt ${utime_to2} ]; then
+    utime_to=${utime_to2}
+  fi
+
+  totime=`to_datetime ${utime_to}`
+fi
 
 # Create work path
 if [ ! -d "${work_path}" ]; then
@@ -151,7 +319,7 @@ fi
 
 # Login premium
 if [ -n "${mail}" ]; then
-  # login
+  # Login
   curl \
       --silent \
       --insecure \
@@ -235,7 +403,7 @@ playlist=`curl \
     --request POST \
     --header "pragma: no-cache" \
     --header "X-Radiko-AuthToken: ${authtoken}" \
-    "https://radiko.jp/v2/api/ts/playlist.m3u8?station_id=${station_id}&ft=${fromtime}&to=${totime}" \
+    "https://radiko.jp/v2/api/ts/playlist.m3u8?station_id=${station_id}&ft=${fromtime}00&to=${totime}00" \
   | awk '/^https?:\/\// {print $0}'`
 
 if [ $? -ne 0 ] || [ -z "${playlist}" ]; then
