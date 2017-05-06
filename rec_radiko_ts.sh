@@ -172,6 +172,7 @@ if [ -n "${mail}" ]; then
 
   if [ -z "${check}" ]; then
     echo "Cannot login Radiko premium" >&2
+    finalize
     exit 1
   fi
 
