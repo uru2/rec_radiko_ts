@@ -253,7 +253,7 @@ done
 # Convert to UNIX time
 utime_from=`to_unixtime "${fromtime}"`
 utime_to=0
-if [ ! -z "${totime}" ]; then
+if [ -n "${totime}" ]; then
   utime_to=`to_unixtime "${totime}"`
 fi
 
@@ -288,7 +288,7 @@ if [ ${utime_to} -lt 0 ]; then
   finalize
   exit 1
 fi
-if [ ! -z "${duration}" ] && [ -z "`echo \"${duration}\" | awk '/^[0-9]+$/ {print $0}'`" ]; then
+if [ -n "${duration}" ] && [ -z "`echo \"${duration}\" | awk '/^[0-9]+$/ {print $0}'`" ]; then
   # -d value is invalid
   echo "Invalid \"Record minute\"" >&2
   finalize
@@ -296,7 +296,7 @@ if [ ! -z "${duration}" ] && [ -z "`echo \"${duration}\" | awk '/^[0-9]+$/ {prin
 fi
 
 # Calculate totime (-d option)
-if [ ! -z "${duration}" ]; then
+if [ -n "${duration}" ]; then
   utime_to1=${utime_to}
   utime_to2=`expr ${utime_from} + \( ${duration} \* 60 \)`
 
