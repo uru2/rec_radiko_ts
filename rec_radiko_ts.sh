@@ -80,6 +80,9 @@ to_unixtime() {
     return 1
   fi
 
+  # for gawk
+  #utime=`echo "$1" | gawk '{ print mktime(sprintf("%d %d %d %d %d 0", substr($0, 0, 4), substr($0, 5, 2), substr($0, 7, 2), substr($0, 9, 2), substr($0, 11, 2))) }'`
+
   utime=`echo "$1" \
     | awk '{
       date_str = $1;
@@ -149,6 +152,9 @@ to_datetime() {
     echo ""
     return -1
   fi
+
+  # for gawk
+  #datetime=`echo "$1" | gawk '{ print strftime("%Y%m%d%H%M", $0) }'`
 
   datetime=`echo "$1" \
     | awk '{
