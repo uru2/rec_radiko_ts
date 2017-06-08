@@ -427,6 +427,13 @@ if [ -f "${output}" ]; then
   rm -f "${output}"
 fi
 
+# Fix file path
+echo "${output}" | grep -q "\.m4a$"
+if [ $? -ne 0 ]; then
+  # Add .m4a
+  output="${output}.m4a"
+fi
+
 # Record
 ffmpeg \
     -loglevel error \
