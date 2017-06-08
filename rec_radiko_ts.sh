@@ -28,12 +28,13 @@ auth1_fms="${work_path}/${pid}_auth1_fms"
 #######################################
 show_usage() {
   cat << _EOT_
-Usage: `basename $0` -s STATION -f DATETIME (-t DATETIME or -d MINUTE) [options]
+Usage: `basename $0` [options]
 Options:
   -s STATION      Station ID (see http://radiko.jp/v3/station/region/full.xml)
   -f DATETIME     Record start datetime (%Y%m%d%H%M format, JST)
   -t DATETIME     Record end datetime (%Y%m%d%H%M format, JST)
   -d MINUTE       Record minute
+  -u URL          Set -s, -f, -t option values from timefree program URL
   -m ADDRESS      Radiko premium mail address
   -p PASSWORD     Radiko premium password
   -o FILEPATH     Output file path
@@ -207,6 +208,7 @@ station_id=
 fromtime=
 totime=
 duration=
+url=
 mail=
 password=
 output=
@@ -219,7 +221,7 @@ if [ $# -lt 1 ]; then
 fi
 
 # Parse argument
-while getopts s:f:t:d:m:p:o: option; do
+while getopts s:f:t:d:m:u:p:o: option; do
   case "${option}" in
     s)
       station_id=${OPTARG}
@@ -236,6 +238,9 @@ while getopts s:f:t:d:m:p:o: option; do
     m)
       mail=${OPTARG}
       ;;
+    u)
+      url=${OPTARG}
+      ;;
     p)
       password=${OPTARG}
       ;;
@@ -249,6 +254,35 @@ while getopts s:f:t:d:m:p:o: option; do
       ;;
   esac
 done
+
+# Get program infomation from URL (-u option)
+if [ -n "${url}" ]; then
+  # Extract station ID and record start datetime
+  station_id=`echo "${url}" | sed 's/^https\{0,1\}:\/\/radiko\.jp\/#!\/ts\/\(.\{1,\}\)\/[0-9]\{14,14\}$/\1/'`
+  ft=`echo "${url}" | sed 's/^https\{0,1\}:\/\/radiko\.jp\/#!\/ts\/.\{1,\}\/\([0-9]\{14,14\}\)$/\1/'`
+  fromtime=`echo "${ft}" | cut -c 1-12`
+  if [ -z "${station_id}" ] || [ -z "${fromtime}" ]; then
+    echo "Parse URL failed" >&2
+    finalize
+    exit 1
+  fi
+
+  # Get area_id from station ID
+  area_id=`curl --silent "http://radiko.jp/v3/station/region/full.xml" | xmllint --xpath "/region/stations/station[id='${station_id}']/area_id/text()" -`
+  if [ $? -ne 0 ] || [ -z "${area_id}" ]; then
+    echo "Parse URL failed" >&2
+    finalize
+    exit 1
+  fi
+
+  # Get to time
+  totime=`curl --silent "http://radiko.jp/v3/program/station/weekly/${station_id}.xml" | xmllint --xpath "/radiko/stations/station[@id='${station_id}']/progs/prog[@ft='${ft}']/@to" - | sed 's/^[ ]\{0,\}to=["'']\{0,\}\([0-9]\{14,14\}\)["'']\{0,\}$/\1/' | cut -c 1-12`
+  if [ -z "${totime}" ]; then
+    echo "Parse URL failed" >&2
+    finalize
+    exit 1
+  fi
+fi
 
 # Convert to UNIX time
 utime_from=`to_unixtime "${fromtime}"`

@@ -8,10 +8,11 @@
 - SWFTools (swfextractのみ使用)
 - FFmpeg (3.x以降 要AAC,HLSサポート)
 
+`-u` オプションを利用する場合は xmllint(libxml2) が必要
 
 ## 使い方
 ```
-$ ./rec_radiko_ts.sh -s STATION -f DATETIME (-t DATETIME or -d MINUTE) [options]
+$ ./rec_radiko_ts.sh [options]
 ```
 
 | 引数 | 必須 |説明 |備考 |
@@ -20,6 +21,7 @@ $ ./rec_radiko_ts.sh -s STATION -f DATETIME (-t DATETIME or -d MINUTE) [options]
 |-f _DATETIME_|○|開始日時|JSTでの日時 %Y%m%d%H%M形式|
 |-t _DATETIME_|△<sup>[*2](#param_note2)</sup>|終了日時|JSTでの日時 %Y%m%d%H%M形式 <sup>[*3](#param_note3)</sup>|
 |-d _MINUTE_|△<sup>[*2](#param_note2)</sup>|録音時間(分)|`-f` で指定した時間に加算することで終了日時を計算する <sup>[*3](#param_note3)</sup>|
+|-u _URL_||番組URL|ラジコサイトの番組表から番組詳細ページへ移動したあとのURLを元に `-s` `-f` `-t` の値を自動で取得する|
 |-m _MAIL_||ラジコプレミアム メールアドレス||
 |-p _PASSWORD_||ラジコプレミアム パスワード||
 |-o _PATH_||出力パス|未指定の場合カレントディレクトリに `放送局ID_開始日時_終了日時.m4a` というファイルを作成|
@@ -37,6 +39,8 @@ $ ./rec_radiko_ts.sh -s RN1 -f 201705020825 -t 201705020835 -o "/hoge/2017-05-02
 $ ./rec_radiko_ts.sh -s YBC -f 201704300855 -t 201704300900 -o "/hoge/2017-04-30 ラジオで詰め将棋.m4a" -m "foo@example.com" -p "password"
 # 終了日時ではなく録音時間で指定
 $ ./rec_radiko_ts.sh -s RN1 -f 201705020825 -d 10
+# 番組URLから
+$ ./rec_radiko_ts.sh -u 'http://radiko.jp/#!/ts/YFM/20170603223000'
 ```
 
 もっとも単体で動かすよりはcronとして以下のように仕掛けると便利でしょう。
