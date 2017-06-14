@@ -3,19 +3,11 @@
 # Radiko timefree program recorder
 # Copyright (C) 2017 uru (https://twitter.com/uru_2)
 # License is MIT (see LICENSE file)
-
+set -u
 pid=$$
 is_login=0
 
-## Get script basepath
-#current_path=`pwd`
-#cd `dirname $0`
-#base_path=`pwd`
-#cd "${current_path}"
-#work_path="${base_path}/tmp_rec_radiko_ts"
-
 work_path=/tmp/tmp_rec_radiko_ts
-
 cookie="${work_path}/${pid}_cookie"
 auth1_fms="${work_path}/${pid}_auth1_fms"
 
@@ -40,7 +32,6 @@ Options:
   -o FILEPATH     Output file path
 _EOT_
 }
-
 
 #######################################
 # Finalize program
@@ -258,8 +249,8 @@ done
 # Get program infomation from URL (-u option)
 if [ -n "${url}" ]; then
   # Extract station ID and record start datetime
-  station_id=`echo "${url}" | sed 's/^https\{0,1\}:\/\/radiko\.jp\/#!\/ts\/\(.\{1,\}\)\/[0-9]\{14,14\}$/\1/'`
-  ft=`echo "${url}" | sed 's/^https\{0,1\}:\/\/radiko\.jp\/#!\/ts\/.\{1,\}\/\([0-9]\{14,14\}\)$/\1/'`
+  station_id=`echo "${url}" | sed -n 's/^https\{0,1\}:\/\/radiko\.jp\/#!\/ts\/\(.\{1,\}\)\/[0-9]\{14,14\}$/\1/p'`
+  ft=`echo "${url}" | sed -n 's/^https\{0,1\}:\/\/radiko\.jp\/#!\/ts\/.\{1,\}\/\([0-9]\{14,14\}\)$/\1/p'`
   fromtime=`echo "${ft}" | cut -c 1-12`
   if [ -z "${station_id}" ] || [ -z "${fromtime}" ]; then
     echo "Parse URL failed" >&2
@@ -267,16 +258,8 @@ if [ -n "${url}" ]; then
     exit 1
   fi
 
-  # Get area_id from station ID
-  area_id=`curl --silent "http://radiko.jp/v3/station/region/full.xml" | xmllint --xpath "/region/stations/station[id='${station_id}']/area_id/text()" -`
-  if [ $? -ne 0 ] || [ -z "${area_id}" ]; then
-    echo "Parse URL failed" >&2
-    finalize
-    exit 1
-  fi
-
-  # Get to time
-  totime=`curl --silent "http://radiko.jp/v3/program/station/weekly/${station_id}.xml" | xmllint --xpath "/radiko/stations/station[@id='${station_id}']/progs/prog[@ft='${ft}']/@to" - | sed 's/^[ ]\{0,\}to=["'']\{0,\}\([0-9]\{14,14\}\)["'']\{0,\}$/\1/' | cut -c 1-12`
+  # Extract record end datetime
+  totime=`curl --silent "http://radiko.jp/v3/program/station/weekly/${station_id}.xml" | xmllint --xpath "/radiko/stations/station[@id='${station_id}']/progs/prog[@ft='${ft}']/@to" - | sed -n 's/^[ ]\{0,\}to=["'']\{0,\}\([0-9]\{14,14\}\)["'']\{0,\}$/\1/p' | cut -c 1-12`
   if [ -z "${totime}" ]; then
     echo "Parse URL failed" >&2
     finalize
@@ -331,10 +314,12 @@ fi
 
 # Calculate totime (-d option)
 if [ -n "${duration}" ]; then
+  # Compare -t value and -d value
   utime_to1=${utime_to}
   utime_to2=`expr ${utime_from} + \( ${duration} \* 60 \)`
 
   if [ ${utime_to1} -lt ${utime_to2} ]; then
+    # Set -d value
     utime_to=${utime_to2}
   fi
 
@@ -456,16 +441,13 @@ fi
 # Generate default file path
 if [ -z "${output}" ]; then
   output="${station_id}_${fromtime}_${totime}.m4a"
-fi
-if [ -f "${output}" ]; then
-  rm -f "${output}"
-fi
-
-# Fix file path
-echo "${output}" | grep -q "\.m4a$"
-if [ $? -ne 0 ]; then
-  # Add .m4a
-  output="${output}.m4a"
+else
+  # Fix file path extension
+  echo "${output}" | grep -q "\.m4a$"
+  if [ $? -ne 0 ]; then
+    # Add .m4a
+    output="${output}.m4a"
+  fi
 fi
 
 # Record
@@ -477,6 +459,7 @@ ffmpeg \
     -acodec copy \
     -vn \
     -bsf:a aac_adtstoasc \
+    -y \
     "${output}"
 
 if [ $? -ne 0 ]; then
