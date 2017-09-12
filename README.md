@@ -5,10 +5,8 @@
 
 ## 必要なもの
 - curl
-- SWFTools (swfextractのみ使用)
+- libxml2 (xmllintのみ使用)
 - FFmpeg (3.x以降 要AAC,HLSサポート)
-
-`-u` オプションを利用する場合は xmllint(libxml2) が必要
 
 ## 使い方
 ```
@@ -52,12 +50,12 @@ $ ./rec_radiko_ts.sh -u 'http://radiko.jp/#!/ts/YFM/20170603223000'
 ## 動作確認環境
 - Ubuntu 16.04.2
     - curl 7.47.0
-    - swfextract 0.9.2+git20130725
-    - ffmpeg 3.3-1~16.04.york1
+    - xmllint using libxml version 20903
+    - ffmpeg 3.3.3-1ubuntu1~16.04.york0
 - FreeBSD 11.0-RELEASE
-    - curl 7.54.0
-    - swfextract 0.9.2
-    - ffmpeg 3.2.4
+    - curl 7.55.1
+    - xmllint using libxml version 20904
+    - ffmpeg 3.3.3
 
 余談ですが、Windows 10 Creators UpdateビルドでのWindows Subsystem for LinuxのUbuntuでも動作します。
 

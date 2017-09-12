@@ -5,11 +5,14 @@
 # License is MIT (see LICENSE file)
 set -u
 pid=$$
-is_login=0
 
+is_login=0
 work_path=/tmp/tmp_rec_radiko_ts
 cookie="${work_path}/${pid}_cookie"
-auth1_fms="${work_path}/${pid}_auth1_fms"
+auth1_res="${work_path}/${pid}_auth1_res"
+
+# Define authorize key value (from http://radiko.jp/apps/js/playerCommon.js)
+readonly AUTHKEY_VALUE="bcd151073c03b352e1ef2fd66c32209da9ca0afa"
 
 #######################################
 # Show usage
@@ -55,7 +58,7 @@ finalize() {
 
   # Remove temporary files
   rm -f "${cookie}"
-  rm -f "${auth1_fms}"
+  rm -f "${auth1_res}"
 }
 
 #######################################
@@ -331,15 +334,10 @@ if [ ! -d "${work_path}" ]; then
   mkdir "${work_path}"
 fi
 
-# Get authorize key file
-authkey="${work_path}/authkey.jpg"
+# Create authorize key file
+authkey="${work_path}/authkey.txt"
 if [ ! -f "${authkey}" ]; then
-  curl \
-      --silent \
-      --output "${work_path}/myplayer-release.swf" \
-      "http://radiko.jp/apps/js/flash/myplayer-release.swf"
-
-  swfextract --binary 12 "${work_path}/myplayer-release.swf" --output "${authkey}"
+  echo "${AUTHKEY_VALUE}" > ${authkey}
 fi
 
 # Login premium
@@ -377,59 +375,51 @@ fi
 curl \
     --silent \
     --insecure \
-    --request POST \
-    --data "" \
-    --header "pragma: no-cache" \
-    --header "X-Radiko-App: pc_ts" \
-    --header "X-Radiko-App-Version: 4.0.0" \
-    --header "X-Radiko-User: test-stream" \
+    --header "X-Radiko-App: pc_html5" \
+    --header "X-Radiko-App-Version: 0.0.1" \
     --header "X-Radiko-Device: pc" \
+    --header "X-Radiko-User: dummy_user" \
     --cookie "${cookie}" \
-    --output "${auth1_fms}" \
-    "https://radiko.jp/v2/api/auth1_fms"
+    --dump-header "${auth1_res}" \
+    --output /dev/null \
+    "https://radiko.jp/v2/api/auth1"
 
 if [ $? -ne 0 ]; then
-  echo "auth1_fms failed" >&2
+  echo "auth1 failed" >&2
   finalize
   exit 1
 fi
 
 # Get partial key
-authtoken=`cat "${auth1_fms}" | awk 'tolower($0) ~/^x-radiko-authtoken=/ {print substr($0,20,length($0)-20)}'`
-keyoffset=`cat "${auth1_fms}" | awk 'tolower($0) ~/^x-radiko-keyoffset=/ {print substr($0,20,length($0)-20)}'`
-keylength=`cat "${auth1_fms}" | awk 'tolower($0) ~/^x-radiko-keylength=/ {print substr($0,20,length($0)-20)}'`
+authtoken=`cat "${auth1_res}" | awk 'tolower($0) ~/^x-radiko-authtoken: / {print substr($0,21,length($0)-21)}'`
+keyoffset=`cat "${auth1_res}" | awk 'tolower($0) ~/^x-radiko-keyoffset: / {print substr($0,21,length($0)-21)}'`
+keylength=`cat "${auth1_res}" | awk 'tolower($0) ~/^x-radiko-keylength: / {print substr($0,21,length($0)-21)}'`
 partialkey=`dd if=${authkey} bs=1 skip=${keyoffset} count=${keylength} 2> /dev/null | base64`
 
 # Authorize 2
 curl \
     --silent \
     --insecure \
-    --request POST \
-    --header "pragma: no-cache" \
-    --header "X-Radiko-App: pc_ts" \
-    --header "X-Radiko-App-Version: 4.0.0" \
-    --header "X-Radiko-User: test-stream" \
     --header "X-Radiko-Device: pc" \
+    --header "X-Radiko-User: dummy_user" \
     --header "X-Radiko-AuthToken: ${authtoken}" \
     --header "X-Radiko-PartialKey: ${partialkey}" \
     --cookie "${cookie}" \
     --output /dev/null \
-    "https://radiko.jp/v2/api/auth2_fms"
+    "https://radiko.jp/v2/api/auth2"
 
 if [ $? -ne 0 ]; then
-  echo "auth2_fms failed" >&2
+  echo "auth2 failed" >&2
   finalize
   exit 1
 fi
 
-# Get playlist
+# Get playlist URL
 playlist=`curl \
     --silent \
     --insecure \
-    --request POST \
-    --header "pragma: no-cache" \
     --header "X-Radiko-AuthToken: ${authtoken}" \
-    "https://radiko.jp/v2/api/ts/playlist.m3u8?station_id=${station_id}&ft=${fromtime}00&to=${totime}00" \
+    "https://radiko.jp/v2/api/ts/playlist.m3u8?station_id=${station_id}&l=15&ft=${fromtime}00&to=${totime}00" \
   | awk '/^https?:\/\// {print $0}'`
 
 if [ $? -ne 0 ] || [ -z "${playlist}" ]; then
@@ -468,5 +458,6 @@ if [ $? -ne 0 ]; then
   exit 1
 fi
 
+# Finish
 finalize
 exit 0
