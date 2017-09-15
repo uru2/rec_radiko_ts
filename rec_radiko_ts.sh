@@ -8,8 +8,9 @@ pid=$$
 
 is_login=0
 work_path=/tmp/tmp_rec_radiko_ts
-cookie="${work_path}/${pid}_cookie"
-auth1_res="${work_path}/${pid}_auth1_res"
+cookie="${work_path}/cookie.dat"
+auth1_res="${work_path}/auth1_res.${pid}"
+login_pid="${work_path}/login_pid.${pid}"
 
 # Define authorize key value (from http://radiko.jp/apps/js/playerCommon.js)
 readonly AUTHKEY_VALUE="bcd151073c03b352e1ef2fd66c32209da9ca0afa"
@@ -23,7 +24,7 @@ readonly AUTHKEY_VALUE="bcd151073c03b352e1ef2fd66c32209da9ca0afa"
 #######################################
 show_usage() {
   cat << _EOT_
-Usage: `basename $0` [options]
+Usage: $(basename "$0") [options]
 Options:
   -s STATION      Station ID (see http://radiko.jp/v3/station/region/full.xml)
   -f DATETIME     Record start datetime (%Y%m%d%H%M format, JST)
@@ -37,15 +38,85 @@ _EOT_
 }
 
 #######################################
-# Finalize program
+# Radiko Premium Login
+# Arguments:
+#   Mail address
+#   Password
+# Returns:
+#   0: Success
+#   1: Failed
+#######################################
+login() {
+  mail=$1
+  password=$2
+
+  # Running other logged in process?
+  if [ ! -f "${cookie}" ]; then
+    # Login
+    curl \
+        --silent \
+        --insecure \
+        --request POST \
+        --data-urlencode "mail=${mail}" \
+        --data-urlencode "pass=${password}" \
+        --cookie-jar "${cookie}" \
+        --output /dev/null \
+        "https://radiko.jp/ap/member/login/login"
+  fi
+
+  # Check login
+  check=$(curl \
+      --silent \
+      --insecure \
+      --cookie "${cookie}" \
+      "https://radiko.jp/ap/member/webapi/member/login/check" \
+    | awk /\"areafree\":/)
+  if [ -z "${check}" ]; then
+    rm -f "${cookie}"
+    return 1
+  fi
+
+  # Register pid, set login flag
+  printf "%s" "${pid}" > "${login_pid}"
+  is_login=1
+
+  return 0
+}
+
+#######################################
+# Radiko Premium Logout
 # Arguments:
 #   None
 # Returns:
 #   None
 #######################################
-finalize() {
-  # Logout premium
-  if [ "${is_login}" -eq 1 ]; then
+logout() {
+  # Find executing other logged in process
+  exists_other=0
+  find_result=$(mktemp)
+  find "${work_path}" -type f -name "login_pid.*" > "${find_result}"
+  while read -r file; do
+    file_pid=$(cat "${file}")
+
+    # Current process?
+    if [ "${file_pid}" = "${pid}" ]; then
+      # Current process
+      continue
+    fi
+
+    # Alive process?
+    if [ -n "$(ps -o "pid" -p "${file_pid}" | awk 'NR>1{gsub(" ","");print $0;}')" ]; then
+      # Exists other process
+      exists_other=1
+    else
+      # Target process forced termination?
+      rm -f "${file}"
+    fi
+  done < "${find_result}"
+  rm -f "${find_result}"
+
+  # Other logged in process is not exists, then logout
+  if [ ${exists_other} -eq 0 ]; then
     curl \
         --silent \
         --insecure \
@@ -53,11 +124,28 @@ finalize() {
         --output /dev/null \
         "https://radiko.jp/ap/member/webapi/member/logout"
 
-    is_login=0
+    rm -f "${cookie}"
+  fi
+
+  # Remove pid, unset login flag
+  is_login=0
+  rm -f "${login_pid}"
+}
+
+#######################################
+# Finalize program
+# Arguments:
+#   None
+# Returns:
+#   None
+#######################################
+finalize() {
+  # Logout
+  if [ ${is_login} -eq 1 ]; then
+    logout
   fi
 
   # Remove temporary files
-  rm -f "${cookie}"
   rm -f "${auth1_res}"
 }
 
@@ -71,14 +159,14 @@ finalize() {
 #######################################
 to_unixtime() {
   if [ $# -ne 1 ]; then
-    echo -1
+    printf "%s" "-1"
     return 1
   fi
 
   # for gawk
-  #utime=`echo "$1" | gawk '{ print mktime(sprintf("%d %d %d %d %d 0", substr($0, 0, 4), substr($0, 5, 2), substr($0, 7, 2), substr($0, 9, 2), substr($0, 11, 2))) }'`
+  #utime=$(echo "$1" | gawk '{ print mktime(sprintf("%d %d %d %d %d 0", substr($0, 0, 4), substr($0, 5, 2), substr($0, 7, 2), substr($0, 9, 2), substr($0, 11, 2))) }')
 
-  utime=`echo "$1" \
+  utime=$(echo "$1" \
     | awk '{
       date_str = $1;
 
@@ -125,12 +213,13 @@ to_unixtime() {
                 * 86400 + (hour * 3600) + (minute * 60) + second - tz_offset;
       print utime;
       exit;
-    }'`
+    }')
 
-  echo "${utime}"
-  if [ ${utime} -eq -1 ]; then
+  if [ "${utime}" = "-1" ]; then
     return 1
   fi
+
+  echo "${utime}"
   return 0
 }
 
@@ -145,13 +234,13 @@ to_unixtime() {
 to_datetime() {
   if [ $# -ne 1 ]; then
     echo ""
-    return -1
+    return 1
   fi
 
   # for gawk
-  #datetime=`echo "$1" | gawk '{ print strftime("%Y%m%d%H%M", $0) }'`
+  #datetime=$(echo "$1" | gawk '{ print strftime("%Y%m%d%H%M", $0) }')
 
-  datetime=`echo "$1" \
+  datetime=$(echo "$1" \
     | awk '{
       ut = $0 + 32400;  # JST(UTC+9)
 
@@ -191,7 +280,7 @@ to_datetime() {
       }
 
       printf("%04d%02d%02d%02d%02d", year, month, day, hour, minute);
-    }'`
+    }')
 
   echo "${datetime}"
   return 0
@@ -252,9 +341,9 @@ done
 # Get program infomation from URL (-u option)
 if [ -n "${url}" ]; then
   # Extract station ID and record start datetime
-  station_id=`echo "${url}" | sed -n 's/^https\{0,1\}:\/\/radiko\.jp\/#!\/ts\/\(.\{1,\}\)\/[0-9]\{14,14\}$/\1/p'`
-  ft=`echo "${url}" | sed -n 's/^https\{0,1\}:\/\/radiko\.jp\/#!\/ts\/.\{1,\}\/\([0-9]\{14,14\}\)$/\1/p'`
-  fromtime=`echo "${ft}" | cut -c 1-12`
+  station_id=$(echo "${url}" | sed -n 's/^https\{0,1\}:\/\/radiko\.jp\/#!\/ts\/\(.\{1,\}\)\/[0-9]\{14,14\}$/\1/p')
+  ft=$(echo "${url}" | sed -n 's/^https\{0,1\}:\/\/radiko\.jp\/#!\/ts\/.\{1,\}\/\([0-9]\{14,14\}\)$/\1/p')
+  fromtime=$(echo "${ft}" | cut -c 1-12)
   if [ -z "${station_id}" ] || [ -z "${fromtime}" ]; then
     echo "Parse URL failed" >&2
     finalize
@@ -262,7 +351,10 @@ if [ -n "${url}" ]; then
   fi
 
   # Extract record end datetime
-  totime=`curl --silent "http://radiko.jp/v3/program/station/weekly/${station_id}.xml" | xmllint --xpath "/radiko/stations/station[@id='${station_id}']/progs/prog[@ft='${ft}']/@to" - | sed -n 's/^[ ]\{0,\}to=["'']\{0,\}\([0-9]\{14,14\}\)["'']\{0,\}$/\1/p' | cut -c 1-12`
+  totime=$(curl --silent "http://radiko.jp/v3/program/station/weekly/${station_id}.xml" \
+    | xmllint --xpath "/radiko/stations/station[@id='${station_id}']/progs/prog[@ft='${ft}']/@to" - \
+    | sed -n 's/^[ ]\{0,\}to=["'']\{0,\}\([0-9]\{14,14\}\)["'']\{0,\}$/\1/p' \
+    | cut -c 1-12)
   if [ -z "${totime}" ]; then
     echo "Parse URL failed" >&2
     finalize
@@ -271,10 +363,10 @@ if [ -n "${url}" ]; then
 fi
 
 # Convert to UNIX time
-utime_from=`to_unixtime "${fromtime}"`
+utime_from=$(to_unixtime "${fromtime}")
 utime_to=0
 if [ -n "${totime}" ]; then
-  utime_to=`to_unixtime "${totime}"`
+  utime_to=$(to_unixtime "${totime}")
 fi
 
 # Check argument parameter
@@ -308,7 +400,7 @@ if [ ${utime_to} -lt 0 ]; then
   finalize
   exit 1
 fi
-if [ -n "${duration}" ] && [ -z "`echo \"${duration}\" | awk '/^[0-9]+$/ {print $0}'`" ]; then
+if [ -n "${duration}" ] && [ -z "$(echo "${duration}" | awk '/^[0-9]+$/ {print $0}')" ]; then
   # -d value is invalid
   echo "Invalid \"Record minute\"" >&2
   finalize
@@ -319,14 +411,14 @@ fi
 if [ -n "${duration}" ]; then
   # Compare -t value and -d value
   utime_to1=${utime_to}
-  utime_to2=`expr ${utime_from} + \( ${duration} \* 60 \)`
+  utime_to2=$((utime_from + (duration * 60)))
 
   if [ ${utime_to1} -lt ${utime_to2} ]; then
     # Set -d value
     utime_to=${utime_to2}
   fi
 
-  totime=`to_datetime ${utime_to}`
+  totime=$(to_datetime "${utime_to}")
 fi
 
 # Create work path
@@ -337,38 +429,19 @@ fi
 # Create authorize key file
 authkey="${work_path}/authkey.txt"
 if [ ! -f "${authkey}" ]; then
-  echo "${AUTHKEY_VALUE}" > ${authkey}
+  printf "%s" "${AUTHKEY_VALUE}" > ${authkey}
 fi
 
 # Login premium
 if [ -n "${mail}" ]; then
-  # Login
-  curl \
-      --silent \
-      --insecure \
-      --request POST \
-      --data-urlencode "mail=${mail}" \
-      --data-urlencode "pass=${password}" \
-      --cookie-jar "${cookie}" \
-      --output /dev/null \
-      "https://radiko.jp/ap/member/login/login"
+  login "${mail}" "${password}"
+  ret=$?
 
-  # Check login
-  check=`curl \
-      --silent \
-      --insecure \
-      --cookie "${cookie}" \
-      "https://radiko.jp/ap/member/webapi/member/login/check" \
-    | awk /\"areafree\":/`
-
-  if [ -z "${check}" ]; then
+  if [ ${ret} -ne 0 ]; then
     echo "Cannot login Radiko premium" >&2
     finalize
     exit 1
   fi
-
-  # Set login flag
-  is_login=1
 fi
 
 # Authorize 1
@@ -383,18 +456,19 @@ curl \
     --dump-header "${auth1_res}" \
     --output /dev/null \
     "https://radiko.jp/v2/api/auth1"
+ret=$?
 
-if [ $? -ne 0 ]; then
+if [ ${ret} -ne 0 ]; then
   echo "auth1 failed" >&2
   finalize
   exit 1
 fi
 
 # Get partial key
-authtoken=`cat "${auth1_res}" | awk 'tolower($0) ~/^x-radiko-authtoken: / {print substr($0,21,length($0)-21)}'`
-keyoffset=`cat "${auth1_res}" | awk 'tolower($0) ~/^x-radiko-keyoffset: / {print substr($0,21,length($0)-21)}'`
-keylength=`cat "${auth1_res}" | awk 'tolower($0) ~/^x-radiko-keylength: / {print substr($0,21,length($0)-21)}'`
-partialkey=`dd if=${authkey} bs=1 skip=${keyoffset} count=${keylength} 2> /dev/null | base64`
+authtoken=$(awk 'tolower($0) ~/^x-radiko-authtoken: / {print substr($0,21,length($0)-21)}' < "${auth1_res}")
+keyoffset=$(awk 'tolower($0) ~/^x-radiko-keyoffset: / {print substr($0,21,length($0)-21)}' < "${auth1_res}")
+keylength=$(awk 'tolower($0) ~/^x-radiko-keylength: / {print substr($0,21,length($0)-21)}' < "${auth1_res}")
+partialkey=$(dd "if=${authkey}" bs=1 "skip=${keyoffset}" "count=${keylength}" 2> /dev/null | base64)
 
 # Authorize 2
 curl \
@@ -407,23 +481,10 @@ curl \
     --cookie "${cookie}" \
     --output /dev/null \
     "https://radiko.jp/v2/api/auth2"
+ret=$?
 
-if [ $? -ne 0 ]; then
+if [ ${ret} -ne 0 ]; then
   echo "auth2 failed" >&2
-  finalize
-  exit 1
-fi
-
-# Get playlist URL
-playlist=`curl \
-    --silent \
-    --insecure \
-    --header "X-Radiko-AuthToken: ${authtoken}" \
-    "https://radiko.jp/v2/api/ts/playlist.m3u8?station_id=${station_id}&l=15&ft=${fromtime}00&to=${totime}00" \
-  | awk '/^https?:\/\// {print $0}'`
-
-if [ $? -ne 0 ] || [ -z "${playlist}" ]; then
-  echo "Cannot get playlist" >&2
   finalize
   exit 1
 fi
@@ -433,8 +494,10 @@ if [ -z "${output}" ]; then
   output="${station_id}_${fromtime}_${totime}.m4a"
 else
   # Fix file path extension
-  echo "${output}" | grep -q "\.m4a$"
-  if [ $? -ne 0 ]; then
+  echo "${output}" | grep -q "\\.m4a$"
+  ret=$?
+
+  if [ ${ret} -ne 0 ]; then
     # Add .m4a
     output="${output}.m4a"
   fi
@@ -445,14 +508,15 @@ ffmpeg \
     -loglevel error \
     -fflags +discardcorrupt \
     -headers "X-Radiko-Authtoken: ${authtoken}" \
-    -i "${playlist}" \
+    -i "https://radiko.jp/v2/api/ts/playlist.m3u8?station_id=${station_id}&l=15&ft=${fromtime}00&to=${totime}00" \
     -acodec copy \
     -vn \
     -bsf:a aac_adtstoasc \
     -y \
     "${output}"
+ret=$?
 
-if [ $? -ne 0 ]; then
+if [ ${ret} -ne 0 ]; then
   echo "Record failed" >&2
   finalize
   exit 1
