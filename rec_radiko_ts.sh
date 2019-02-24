@@ -1,16 +1,11 @@
 #!/bin/sh
 #
 # Radiko timefree program recorder
-# Copyright (C) 2017 uru (https://twitter.com/uru_2)
+# Copyright (C) 2017-2019 uru (https://twitter.com/uru_2)
 # License is MIT (see LICENSE file)
 set -u
-pid=$$
 
-is_login=0
-work_path=/tmp/tmp_rec_radiko_ts
-cookie="${work_path}/cookie.dat"
-auth1_res="${work_path}/auth1_res.${pid}"
-login_pid="${work_path}/login_pid.${pid}"
+radiko_session=""
 
 # Define authorize key value (from http://radiko.jp/apps/js/playerCommon.js)
 readonly AUTHKEY_VALUE="bcd151073c03b352e1ef2fd66c32209da9ca0afa"
@@ -50,36 +45,75 @@ login() {
   mail=$1
   password=$2
 
-  # Running other logged in process?
-  if [ ! -f "${cookie}" ]; then
-    # Login
-    curl \
-        --silent \
-        --insecure \
-        --request POST \
-        --data-urlencode "mail=${mail}" \
-        --data-urlencode "pass=${password}" \
-        --cookie-jar "${cookie}" \
-        --output /dev/null \
-        "https://radiko.jp/ap/member/login/login"
-  fi
+  # Login
+  login_json=$(curl \
+      --silent \
+      --request POST \
+      --data-urlencode "mail=${mail}" \
+      --data-urlencode "pass=${password}" \
+      --output - \
+      "https://radiko.jp/v4/api/member/login" \
+    | tr -d "\r" \
+    | tr -d "\n")
+
+  # Extract login result
+  radiko_session=$(echo "${login_json}" | extract_login_value "radiko_session")
+  areafree=$(echo "${login_json}" | extract_login_value "areafree")
 
   # Check login
-  check=$(curl \
-      --silent \
-      --insecure \
-      --cookie "${cookie}" \
-      "https://radiko.jp/ap/member/webapi/member/login/check" \
-    | awk /\"areafree\":/)
-  if [ -z "${check}" ]; then
-    rm -f "${cookie}"
+  if [ -z "${radiko_session}" ] || [ "${areafree}" != "1" ]; then
     return 1
   fi
 
-  # Register pid, set login flag
-  printf "%s" "${pid}" > "${login_pid}"
-  is_login=1
+  return 0
+}
 
+#######################################
+# Extract login JSON value
+# Arguments:
+#   (pipe)Login result JSON
+#   Key
+# Returns:
+#   None
+#######################################
+extract_login_value() {
+  name=$1
+
+  # for gawk
+  #value=$(cat - | gawk -v "name=${name}" 'BEGIN { FS = "\n"; } { regex = "\""name"\"[ ]*:[ ]*(\"[0-9a-zA-Z]+\"|[0-9]*)"; if (!match($0, regex, v)) { exit 0; } val=v[1]; if (match(val, /\"([0-9a-zA-Z]*)\"/, v)) { val=v[1]; } print val; }')
+
+  value=$(cat - \
+    | awk -v "name=${name}" '
+      BEGIN {
+        FS = "\n";
+      }
+      {
+        # Extract key and value
+        regex = "\""name"\"[ ]*:[ ]*(\"[0-9a-zA-Z]+\"|[0-9]*)";
+        if (!match($1, regex)) {
+          exit 0;
+        }
+        str = substr($0, RSTART, RLENGTH);
+
+        # Extract value
+        regex = "\""name"\"[ ]*:[ ]*";
+        match(str, regex);
+        str = substr(str, RSTART + RLENGTH);
+
+        # String value
+        if (match(str, /^\"[0-9a-zA-Z]+\"/)) {
+          print substr(str, RSTART + 1, RLENGTH - 2);
+          exit 0;
+        }
+
+        # Numeric value
+        if (match(str, /^[0-9]*/)) {
+          print substr(str, RSTART, RLENGTH);
+          exit 0;
+        }
+      }')
+
+  echo "${value}"
   return 0
 }
 
@@ -91,45 +125,15 @@ login() {
 #   None
 #######################################
 logout() {
-  # Find executing other logged in process
-  exists_other=0
-  find_result=$(mktemp)
-  find "${work_path}" -type f -name "login_pid.*" > "${find_result}"
-  while read -r file; do
-    file_pid=$(cat "${file}")
-
-    # Current process?
-    if [ "${file_pid}" = "${pid}" ]; then
-      # Current process
-      continue
-    fi
-
-    # Alive process?
-    if [ -n "$(ps -o "pid" -p "${file_pid}" | awk 'NR>1{gsub(" ","");print $0;}')" ]; then
-      # Exists other process
-      exists_other=1
-    else
-      # Target process forced termination?
-      rm -f "${file}"
-    fi
-  done < "${find_result}"
-  rm -f "${find_result}"
-
-  # Other logged in process is not exists, then logout
-  if [ ${exists_other} -eq 0 ]; then
-    curl \
-        --silent \
-        --insecure \
-        --cookie "${cookie}" \
-        --output /dev/null \
-        "https://radiko.jp/ap/member/webapi/member/logout"
-
-    rm -f "${cookie}"
-  fi
-
-  # Remove pid, unset login flag
-  is_login=0
-  rm -f "${login_pid}"
+  # Logout
+  curl \
+    --silent \
+    --request POST \
+    --data-urlencode "radiko_session=${radiko_session}" \
+    --output /dev/null \
+    "https://radiko.jp/v4/api/member/logout"
+  radiko_session=""
+  return 0
 }
 
 #######################################
@@ -140,13 +144,10 @@ logout() {
 #   None
 #######################################
 finalize() {
-  # Logout
-  if [ ${is_login} -eq 1 ]; then
+  if [ -n "${radiko_session}" ]; then
     logout
   fi
-
-  # Remove temporary files
-  rm -f "${auth1_res}"
+  return 0
 }
 
 #######################################
@@ -215,11 +216,10 @@ to_unixtime() {
       exit;
     }')
 
+  echo "${utime}"
   if [ "${utime}" = "-1" ]; then
     return 1
   fi
-
-  echo "${utime}"
   return 0
 }
 
@@ -307,28 +307,28 @@ fi
 while getopts s:f:t:d:m:u:p:o: option; do
   case "${option}" in
     s)
-      station_id=${OPTARG}
+      station_id="${OPTARG}"
       ;;
     f)
-      fromtime=${OPTARG}
+      fromtime="${OPTARG}"
       ;;
     t)
-      totime=${OPTARG}
+      totime="${OPTARG}"
       ;;
     d)
-      duration=${OPTARG}
+      duration="${OPTARG}"
       ;;
     m)
-      mail=${OPTARG}
+      mail="${OPTARG}"
       ;;
     u)
-      url=${OPTARG}
+      url="${OPTARG}"
       ;;
     p)
-      password=${OPTARG}
+      password="${OPTARG}"
       ;;
     o)
-      output=${OPTARG}
+      output="${OPTARG}"
       ;;
     \?)
       show_usage
@@ -382,7 +382,7 @@ if [ -z "${fromtime}" ]; then
   finalize
   exit 1
 fi
-if [ ${utime_from} -lt 0 ]; then
+if [ "${utime_from}" -lt 0 ]; then
   # -f value is empty
   echo "Invalid \"Record start datetime\" format" >&2
   finalize
@@ -394,7 +394,7 @@ if [ -z "${totime}" ] && [ -z "${duration}" ]; then
   finalize
   exit 1
 fi
-if [ ${utime_to} -lt 0 ]; then
+if [ "${utime_to}" -lt 0 ]; then
   # -t value is invalid
   echo "Invalid \"Record end datetime\" format" >&2
   finalize
@@ -413,23 +413,12 @@ if [ -n "${duration}" ]; then
   utime_to1=${utime_to}
   utime_to2=$((utime_from + (duration * 60)))
 
-  if [ ${utime_to1} -lt ${utime_to2} ]; then
+  if [ "${utime_to1}" -lt ${utime_to2} ]; then
     # Set -d value
     utime_to=${utime_to2}
   fi
 
   totime=$(to_datetime "${utime_to}")
-fi
-
-# Create work path
-if [ ! -d "${work_path}" ]; then
-  mkdir "${work_path}"
-fi
-
-# Create authorize key file
-authkey="${work_path}/authkey.txt"
-if [ ! -f "${authkey}" ]; then
-  printf "%s" "${AUTHKEY_VALUE}" > ${authkey}
 fi
 
 # Login premium
@@ -445,42 +434,42 @@ if [ -n "${mail}" ]; then
 fi
 
 # Authorize 1
-curl \
+auth1_res=$(curl \
     --silent \
-    --insecure \
     --header "X-Radiko-App: pc_html5" \
     --header "X-Radiko-App-Version: 0.0.1" \
     --header "X-Radiko-Device: pc" \
     --header "X-Radiko-User: dummy_user" \
-    --cookie "${cookie}" \
-    --dump-header "${auth1_res}" \
+    --dump-header - \
     --output /dev/null \
-    "https://radiko.jp/v2/api/auth1"
-ret=$?
+    "https://radiko.jp/v2/api/auth1")
 
-if [ ${ret} -ne 0 ]; then
+# Get partial key
+authtoken=$(echo "${auth1_res}" | awk 'tolower($0) ~/^x-radiko-authtoken: / {print substr($0,21,length($0)-21)}')
+keyoffset=$(echo "${auth1_res}" | awk 'tolower($0) ~/^x-radiko-keyoffset: / {print substr($0,21,length($0)-21)}')
+keylength=$(echo "${auth1_res}" | awk 'tolower($0) ~/^x-radiko-keylength: / {print substr($0,21,length($0)-21)}')
+
+if [ -z "${authtoken}" ] || [ -z "${keyoffset}" ] || [ -z "${keylength}" ]; then
   echo "auth1 failed" >&2
   finalize
   exit 1
 fi
 
-# Get partial key
-authtoken=$(awk 'tolower($0) ~/^x-radiko-authtoken: / {print substr($0,21,length($0)-21)}' < "${auth1_res}")
-keyoffset=$(awk 'tolower($0) ~/^x-radiko-keyoffset: / {print substr($0,21,length($0)-21)}' < "${auth1_res}")
-keylength=$(awk 'tolower($0) ~/^x-radiko-keylength: / {print substr($0,21,length($0)-21)}' < "${auth1_res}")
-partialkey=$(dd "if=${authkey}" bs=1 "skip=${keyoffset}" "count=${keylength}" 2> /dev/null | base64)
+partialkey=$(echo "${AUTHKEY_VALUE}" | dd bs=1 "skip=${keyoffset}" "count=${keylength}" 2> /dev/null | base64)
 
 # Authorize 2
+auth2_url_param=""
+if [ -n "${radiko_session}" ]; then
+  auth2_url_param="?radiko_session=${radiko_session}"
+fi
 curl \
     --silent \
-    --insecure \
     --header "X-Radiko-Device: pc" \
     --header "X-Radiko-User: dummy_user" \
     --header "X-Radiko-AuthToken: ${authtoken}" \
     --header "X-Radiko-PartialKey: ${partialkey}" \
-    --cookie "${cookie}" \
     --output /dev/null \
-    "https://radiko.jp/v2/api/auth2"
+    "https://radiko.jp/v2/api/auth2${auth2_url_param}"
 ret=$?
 
 if [ ${ret} -ne 0 ]; then
