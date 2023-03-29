@@ -492,12 +492,15 @@ else
   fi
 fi
 
+# Generate pseudo random MD5 hash values (tracking key?)
+lsid=$(head -c 100 /dev/random | base64 | tr -dc '0-9A-Fa-f' | tr '[:upper:]' '[:lower:]' | cut -c 1-32)
+
 # Record
 ffmpeg \
     -loglevel error \
     -fflags +discardcorrupt \
     -headers "X-Radiko-Authtoken: ${authtoken}" \
-    -i "https://radiko.jp/v2/api/ts/playlist.m3u8?station_id=${station_id}&l=15&ft=${fromtime}00&to=${totime}00" \
+    -i "https://radiko.jp/v2/api/ts/playlist.m3u8?station_id=${station_id}&start_at=${fromtime}00&ft=${fromtime}00&end_at=${totime}00&to=${totime}00&seek=${fromtime}00&l=15&lsid=${lsid}&type=c" \
     -acodec copy \
     -vn \
     -bsf:a aac_adtstoasc \
