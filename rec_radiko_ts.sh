@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 # Radiko timefree program recorder
-# Copyright (C) 2017-2019 uru (https://twitter.com/uru_2)
+# Copyright (C) 2017-2025 uru (https://twitter.com/uru_2)
 # License is MIT (see LICENSE file)
 set -u
 
@@ -21,7 +21,7 @@ show_usage() {
   cat << _EOT_
 Usage: $(basename "$0") [options]
 Options:
-  -s STATION      Station ID (see http://radiko.jp/v3/station/region/full.xml)
+  -s STATION      Station ID
   -f DATETIME     Record start datetime (%Y%m%d%H%M format, JST)
   -t DATETIME     Record end datetime (%Y%m%d%H%M format, JST)
   -d MINUTE       Record minute
@@ -29,6 +29,7 @@ Options:
   -m ADDRESS      Radiko premium mail address
   -p PASSWORD     Radiko premium password
   -o FILEPATH     Output file path
+  -l              Show station ID and name.
 _EOT_
 }
 
@@ -286,6 +287,22 @@ to_datetime() {
   return 0
 }
 
+#######################################
+# Show all station ID and name
+# Arguments:
+#   None
+# Returns:
+#   None
+#######################################
+show_all_stations() {
+  # 
+  curl --silent https://radiko.jp/v3/station/region/full.xml \
+    | xmllint --xpath "/region/stations/station[timefree='1']/id/text() | /region/stations/station[timefree='1']/name/text()" - \
+    | paste -d ':' - -
+
+  return 0
+}
+
 # Define argument values
 station_id=
 fromtime=
@@ -304,7 +321,7 @@ if [ $# -lt 1 ]; then
 fi
 
 # Parse argument
-while getopts s:f:t:d:m:u:p:o: option; do
+while getopts s:f:t:d:m:u:p:o:l option; do
   case "${option}" in
     s)
       station_id="${OPTARG}"
@@ -329,6 +346,10 @@ while getopts s:f:t:d:m:u:p:o: option; do
       ;;
     o)
       output="${OPTARG}"
+      ;;
+    l)
+      show_all_stations
+      exit 0
       ;;
     \?)
       show_usage

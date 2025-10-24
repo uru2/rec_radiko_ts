@@ -15,18 +15,19 @@ $ ./rec_radiko_ts.sh [options]
 
 | 引数 | 必須 |説明 |備考 |
 |:-:|:-:|:-|:-|
-|-s _STATION_|○|放送局ID|ラジコサイトの番組表から番組詳細ページへ移動したあとのURL  /#!/ts/`???`/ にあたる文字 <sup>[*1](#param_note1)</sup>|
+|-s _STATION_|○|放送局ID|`-l` で表示されるID|
 |-f _DATETIME_|○|開始日時|JSTでの日時 %Y%m%d%H%M形式|
-|-t _DATETIME_|△<sup>[*2](#param_note2)</sup>|終了日時|JSTでの日時 %Y%m%d%H%M形式 <sup>[*3](#param_note3)</sup>|
-|-d _MINUTE_|△<sup>[*2](#param_note2)</sup>|録音時間(分)|`-f` で指定した時間に加算することで終了日時を計算する <sup>[*3](#param_note3)</sup>|
+|-t _DATETIME_|△<sup>[*1](#param_note1)</sup>|終了日時|JSTでの日時 %Y%m%d%H%M形式 <sup>[*2](#param_note2)</sup>|
+|-d _MINUTE_|△<sup>[*1](#param_note1)</sup>|録音時間(分)|`-f` で指定した時間に加算することで終了日時を計算する <sup>[*2](#param_note2)</sup>|
 |-u _URL_||番組URL|ラジコサイトの番組表から番組詳細ページへ移動したあとのURLを元に `-s` `-f` `-t` の値を自動で取得する|
 |-m _MAIL_||ラジコプレミアム メールアドレス||
 |-p _PASSWORD_||ラジコプレミアム パスワード||
 |-o _PATH_||出力パス|未指定の場合カレントディレクトリに `放送局ID_開始日時_終了日時.m4a` というファイルを作成|
+|-l||放送局ID・名称表示||
 
-<a id="param_note1" name="param_note1">*1</a> http://radiko.jp/v3/station/region/full.xml のIDと同じ。  
-<a id="param_note2" name="param_note2">*2</a> どちらかのオプションを指定すること。`-t` および `-d` の両方が指定されていた場合、終了日時は長くなるほうに合わせる。  
-<a id="param_note3" name="param_note3">*3</a> 終了日時はスクリプトを実行する日時-2分前までになるよう指定すること。未来の日時を指定したりスクリプト実行直前の日時を指定した場合はエラーが発生、または再生できないファイルが生成されることがある。  
+
+<a id="param_note1" name="param_note1">*1</a> どちらかのオプションを指定すること。`-t` および `-d` の両方が指定されていた場合、終了日時は長くなるほうに合わせる。  
+<a id="param_note2" name="param_note2">*2</a> 終了日時はスクリプトを実行する日時-2分前までになるよう指定すること。未来の日時を指定したりスクリプト実行直前の日時を指定した場合はエラーが発生、または再生できないファイルが生成されることがある。  
 
 
 ## 実行例
