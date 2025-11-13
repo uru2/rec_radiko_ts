@@ -526,18 +526,43 @@ fi
 # Login premium
 radiko_session=
 if [ -n "${mail}" ]; then
-  if ! radiko_session=$(radiko_login "${mail}" "${password}") ; then
-    echo 'Cannot login Radiko premium' >&2
-    exit 1
-  fi
+  i=1
+  while : ; do
+    # Max 3 times
+    if radiko_session=$(radiko_login "${mail}" "${password}") ; then
+      # Success
+      break
+    fi
+
+    i=$((i + 1))
+    if [ ${i} -gt 3 ]; then
+      echo 'Cannot login Radiko premium' >&2
+      exit 1
+    fi
+
+    sleep 5
+  done
 fi
 
 # Authorize
-if ! authtoken=$(radiko_auth "${radiko_session}") ; then
-  echo 'auth failed' >&2
-  radiko_logout "${radiko_session}"
-  exit 1
-fi
+authtoken=
+i=1
+while : ; do
+  # Max 3 times
+  if authtoken=$(radiko_auth "${radiko_session}") ; then
+    # Success
+    break
+  fi
+
+  i=$((i + 1))
+  if [ ${i} -gt 3 ]; then
+    echo 'auth failed' >&2
+    radiko_logout "${radiko_session}"
+    exit 1
+  fi
+
+  sleep 5
+done
 
 # Generate default file path
 if [ -z "${output}" ]; then
