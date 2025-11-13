@@ -3,12 +3,10 @@
 # Radiko timefree program recorder
 # Copyright (C) 2017-2025 uru (https://twitter.com/uru_2)
 # License is MIT (see LICENSE file)
-set -u
+set -eu
 
-radiko_session=""
-
-# Define authorize key value (from http://radiko.jp/apps/js/playerCommon.js)
-readonly AUTHKEY_VALUE="bcd151073c03b352e1ef2fd66c32209da9ca0afa"
+# Define authorize key value (from https://radiko.jp/apps/js/playerCommon.js)
+readonly AUTHKEY_VALUE='bcd151073c03b352e1ef2fd66c32209da9ca0afa'
 
 #######################################
 # Show usage
@@ -42,7 +40,7 @@ _EOT_
 #   0: Success
 #   1: Failed
 #######################################
-login() {
+radiko_login() {
   mail=$1
   password=$2
 
@@ -53,19 +51,18 @@ login() {
       --data-urlencode "mail=${mail}" \
       --data-urlencode "pass=${password}" \
       --output - \
-      "https://radiko.jp/v4/api/member/login" \
-    | tr -d "\r" \
-    | tr -d "\n")
+      'https://radiko.jp/v4/api/member/login' \
+    | tr -d '\r\n') || return 1
 
   # Extract login result
-  radiko_session=$(echo "${login_json}" | extract_login_value "radiko_session")
-  areafree=$(echo "${login_json}" | extract_login_value "areafree")
+  radiko_session=$(echo "${login_json}" | extract_login_value 'radiko_session')
 
   # Check login
-  if [ -z "${radiko_session}" ] || [ "${areafree}" != "1" ]; then
+  if [ -z "${radiko_session}" ]; then
     return 1
   fi
 
+  echo "${radiko_session}"
   return 0
 }
 
@@ -80,8 +77,8 @@ login() {
 extract_login_value() {
   name=$1
 
-  # for gawk
-  #value=$(cat - | gawk -v "name=${name}" 'BEGIN { FS = "\n"; } { regex = "\""name"\"[ ]*:[ ]*(\"[0-9a-zA-Z]+\"|[0-9]*)"; if (!match($0, regex, v)) { exit 0; } val=v[1]; if (match(val, /\"([0-9a-zA-Z]*)\"/, v)) { val=v[1]; } print val; }')
+  # for jq
+  #value=$(cat - | jq -r ".${name}")
 
   value=$(cat - \
     | awk -v "name=${name}" '
@@ -102,7 +99,8 @@ extract_login_value() {
         str = substr(str, RSTART + RLENGTH);
 
         # String value
-        if (match(str, /^\"[0-9a-zA-Z]+\"/)) {
+        regex = "^\"[0-9a-zA-Z]+\"";
+        if (match(str, regex)) {
           print substr(str, RSTART + 1, RLENGTH - 2);
           exit 0;
         }
@@ -121,34 +119,23 @@ extract_login_value() {
 #######################################
 # Radiko Premium Logout
 # Arguments:
-#   None
+#   Login session
 # Returns:
 #   None
 #######################################
-logout() {
+radiko_logout() {
+  radiko_session=$1
+  if [ -z "${radiko_session}" ]; then
+    return 0
+  fi
+
   # Logout
   curl \
     --silent \
     --request POST \
     --data-urlencode "radiko_session=${radiko_session}" \
     --output /dev/null \
-    "https://radiko.jp/v4/api/member/logout"
-  radiko_session=""
-  return 0
-}
-
-#######################################
-# Finalize program
-# Arguments:
-#   None
-# Returns:
-#   None
-#######################################
-finalize() {
-  if [ -n "${radiko_session}" ]; then
-    logout
-  fi
-  return 0
+    'https://radiko.jp/v4/api/member/logout' || true  # Ignore error
 }
 
 #######################################
@@ -157,16 +144,11 @@ finalize() {
 #   datetime string (%Y%m%d%H%M format)
 # Returns:
 #   0: Success
-#   1: Failure
+#   1: Failed
 #######################################
 to_unixtime() {
-  if [ $# -ne 1 ]; then
-    printf "%s" "-1"
-    return 1
-  fi
-
   # for gawk
-  #utime=$(echo "$1" | gawk '{ print mktime(sprintf("%d %d %d %d %d 0", substr($0, 0, 4), substr($0, 5, 2), substr($0, 7, 2), substr($0, 9, 2), substr($0, 11, 2))) }')
+  #utime=$(echo "$1" | gawk '{ print mktime(sprintf("%d %d %d %d %d 0", substr($0, 0, 4), substr($0, 5, 2), substr($0, 7, 2), substr($0, 9, 2), substr($0, 11, 2)), 1) - 32400 }')
 
   utime=$(echo "$1" \
     | awk '{
@@ -217,10 +199,11 @@ to_unixtime() {
       exit;
     }')
 
-  echo "${utime}"
-  if [ "${utime}" = "-1" ]; then
+  if [ "${utime}" = '-1' ]; then
     return 1
   fi
+
+  echo "${utime}"
   return 0
 }
 
@@ -230,16 +213,11 @@ to_unixtime() {
 #   UNIX time
 # Returns:
 #   0: Success
-#   1: Failure
+#   1: Failed
 #######################################
 to_datetime() {
-  if [ $# -ne 1 ]; then
-    echo ""
-    return 1
-  fi
-
   # for gawk
-  #datetime=$(echo "$1" | gawk '{ print strftime("%Y%m%d%H%M", $0) }')
+  #datetime=$(echo "$1" | gawk '{ print strftime("%Y%m%d%H%M", int($0) + 32400, 1) }')
 
   datetime=$(echo "$1" \
     | awk '{
@@ -295,11 +273,124 @@ to_datetime() {
 #   None
 #######################################
 show_all_stations() {
-  # 
-  curl --silent https://radiko.jp/v3/station/region/full.xml \
-    | xmllint --xpath "/region/stations/station[timefree='1']/id/text() | /region/stations/station[timefree='1']/name/text()" - \
+  # Format to "{id}:{name}"
+  curl --silent 'https://radiko.jp/v3/station/region/full.xml' \
+    | xmllint --xpath '/region/stations/station[timefree="1"]/id/text() | /region/stations/station[timefree="1"]/name/text()' - \
     | paste -d ':' - -
+}
 
+#######################################
+# Extract parameters from URL
+# Arguments:
+#   URL
+# Returns:
+#   0: Success
+#   1: Failed
+#######################################
+extract_url_params() {
+  url=$1
+
+  # Extract station ID and record start datetime
+  station_id=$(echo "${url}" | sed -n 's;https\{0,1\}://radiko\.jp/#!/ts/\(.\{1,\}\)/[0-9]\{14,14\}$;\1;p')
+  ft=$(echo "${url}" | sed -n 's;^https\{0,1\}://radiko\.jp/#!/ts/.\{1,\}/\([0-9]\{14,14\}\)$;\1;p')
+  fromtime=$(echo "${ft}" | cut -c 1-12)
+  if [ -z "${station_id}" ] || [ -z "${fromtime}" ]; then
+    return 1
+  fi
+
+  # Extract record end datetime
+  totime=$(curl --silent "https://radiko.jp/v3/program/station/weekly/${station_id}.xml" \
+    | xmllint --xpath "substring(string(/radiko/stations/station[@id='${station_id}']/progs/prog[@ft='${ft}']/@to), 1, 12)" -)
+  if [ -z "${totime}" ]; then
+    return 1
+  fi
+
+  # Concat parameters
+  echo "${station_id},${fromtime},${totime}"
+  return 0
+}
+
+#######################################
+# Radiko authorize
+# Arguments:
+#   Login session
+# Returns:
+#   0: Success
+#   1: Failed
+#######################################
+radiko_auth() {
+  radiko_session=$1
+
+  # Authorize 1
+  auth1_res=$(curl \
+      --silent \
+      --header 'X-Radiko-App: pc_html5' \
+      --header 'X-Radiko-App-Version: 0.0.1' \
+      --header 'X-Radiko-Device: pc' \
+      --header 'X-Radiko-User: dummy_user' \
+      --dump-header - \
+      --output /dev/null \
+      'https://radiko.jp/v2/api/auth1' \
+    | tr -d '\r') || return 1
+
+  # Get partial key
+  authtoken=$(echo "${auth1_res}" | sed -n 's/^[xX]-[rR][aA][dD][iI][kK][oO]-[aU][uU][tT][hH][tT][oO][kK][eE][nN]:[ \t]*\(.\{1,\}\)$/\1/p')
+  keyoffset=$(echo "${auth1_res}" | sed -n 's/^[xX]-[rR][aA][dD][iI][kK][oO]-[kK][eE][yY][oO][fF][fF][sS][eE][tT]:[ \t]*\(.\{1,\}\)$/\1/p')
+  keylength=$(echo "${auth1_res}" | sed -n 's/^[xX]-[rR][aA][dD][iI][kK][oO]-[kK][eE][yY][lL][eE][nN][gG][tT][hH]:[ \t]*\(.\{1,\}\)$/\1/p')
+  if [ -z "${authtoken}" ] || [ -z "${keyoffset}" ] || [ -z "${keylength}" ]; then
+    return 1
+  fi
+
+  partialkey=$(echo "${AUTHKEY_VALUE}" | dd bs=1 "skip=${keyoffset}" "count=${keylength}" 2> /dev/null | b64_enc | tr -d '\n')
+  if [ -z "${partialkey}" ]; then
+    return 1
+  fi
+
+  # Authorize 2
+  auth2_url_param=
+  if [ -n "${radiko_session}" ]; then
+    auth2_url_param="?radiko_session=${radiko_session}"
+  fi
+  auth2_res=$(curl \
+      --silent \
+      --header 'X-Radiko-Device: pc' \
+      --header 'X-Radiko-User: dummy_user' \
+      --header "X-Radiko-AuthToken: ${authtoken}" \
+      --header "X-Radiko-PartialKey: ${partialkey}" \
+      "https://radiko.jp/v2/api/auth2${auth2_url_param}" \
+    | tr -d '\r') || return 1
+  if [ -z "${auth2_res}" ] || [ "${auth2_res}" = 'OUT' ]; then
+    # Not detected access area(prefecture) or detected not in Japan
+    return 1
+  fi
+
+  echo "${authtoken}"
+  return 0
+}
+
+#######################################
+# BASE64 encode wrapper
+# Arguments:
+#   (pipe)Target binary
+# Returns:
+#   0: Success
+#   1: Failed
+#######################################
+b64_enc() {
+  if which base64 > /dev/null 2>&1 ; then
+    base64
+  elif which basenc > /dev/null 2>&1 ; then
+    basenc --base64 -
+  elif which openssl > /dev/null 2>&1 ; then
+    openssl enc -base64
+  elif which uuencode > /dev/null 2>&1 ; then
+    uuencode -m - | sed -e '1d' -e '$d'
+  elif which b64encode > /dev/null 2>&1 ; then
+    b64encode - | sed -e '1d' -e '$d'
+  else
+    echo 'base64, basenc, openssl, uuencode, b64encode commands not found.' >&2
+    return 1
+  fi
   return 0
 }
 
@@ -316,7 +407,6 @@ output=
 # Argument none?
 if [ $# -lt 1 ]; then
   show_usage
-  finalize
   exit 1
 fi
 
@@ -353,7 +443,6 @@ while getopts s:f:t:d:m:u:p:o:l option; do
       ;;
     \?)
       show_usage
-      finalize
       exit 1
       ;;
   esac
@@ -361,80 +450,72 @@ done
 
 # Get program infomation from URL (-u option)
 if [ -n "${url}" ]; then
-  # Extract station ID and record start datetime
-  station_id=$(echo "${url}" | sed -n 's/^https\{0,1\}:\/\/radiko\.jp\/#!\/ts\/\(.\{1,\}\)\/[0-9]\{14,14\}$/\1/p')
-  ft=$(echo "${url}" | sed -n 's/^https\{0,1\}:\/\/radiko\.jp\/#!\/ts\/.\{1,\}\/\([0-9]\{14,14\}\)$/\1/p')
-  fromtime=$(echo "${ft}" | cut -c 1-12)
-  if [ -z "${station_id}" ] || [ -z "${fromtime}" ]; then
-    echo "Parse URL failed" >&2
-    finalize
+  if ! url_params=$(extract_url_params "${url}") ; then
+    echo 'Parse URL failed' >&2
     exit 1
   fi
 
-  # Extract record end datetime
-  totime=$(curl --silent "http://radiko.jp/v3/program/station/weekly/${station_id}.xml" \
-    | xmllint --xpath "/radiko/stations/station[@id='${station_id}']/progs/prog[@ft='${ft}']/@to" - \
-    | sed -n 's/^[ ]\{0,\}to=["'']\{0,\}\([0-9]\{14,14\}\)["'']\{0,\}$/\1/p' \
-    | cut -c 1-12)
-  if [ -z "${totime}" ]; then
-    echo "Parse URL failed" >&2
-    finalize
-    exit 1
-  fi
+  station_id=$(echo "${url_params}" | cut -d ',' -f1)
+  fromtime=$(echo "${url_params}" | cut -d ',' -f2)
+  totime=$(echo "${url_params}" | cut -d ',' -f3)
 fi
 
 # Convert to UNIX time
-utime_from=$(to_unixtime "${fromtime}")
+if ! utime_from=$(to_unixtime "${fromtime}") ; then
+  echo 'Invalid "Record start datetime"' >&2
+  exit 1
+fi
 utime_to=0
 if [ -n "${totime}" ]; then
-  utime_to=$(to_unixtime "${totime}")
+  if ! utime_to=$(to_unixtime "${totime}") ; then
+    echo 'Invalid "Record end datetime"' >&2
+    exit 1
+  fi
+
+  if [ "${utime_from}" -gt "${utime_to}" ]; then
+    echo 'Start and end datetime range is invalid.' >&2
+    exit 1
+  fi
 fi
 
 # Check argument parameter
 if [ -z "${station_id}" ]; then
   # -s value is empty
-  echo "Require \"Station ID\"" >&2
-  finalize
+  echo 'Require "Station ID"' >&2
   exit 1
 fi
 if [ -z "${fromtime}" ]; then
   # -f value is empty
-  echo "Require \"Record start datetime\"" >&2
-  finalize
+  echo 'Require "Record start datetime"' >&2
   exit 1
 fi
 if [ "${utime_from}" -lt 0 ]; then
   # -f value is empty
-  echo "Invalid \"Record start datetime\" format" >&2
-  finalize
+  echo 'Invalid "Record start datetime" format' >&2
   exit 1
 fi
 if [ -z "${totime}" ] && [ -z "${duration}" ]; then
   # -t value and -d value are empty
-  echo "Require \"Record end datetime\" or \"Record minutes\"" >&2
-  finalize
+  echo 'Require "Record end datetime" or "Record minutes"' >&2
   exit 1
 fi
 if [ "${utime_to}" -lt 0 ]; then
   # -t value is invalid
-  echo "Invalid \"Record end datetime\" format" >&2
-  finalize
+  echo 'Invalid "Record end datetime" format' >&2
   exit 1
 fi
-if [ -n "${duration}" ] && [ -z "$(echo "${duration}" | awk '/^[0-9]+$/ {print $0}')" ]; then
+if [ -n "${duration}" ] && echo "${duration}" | grep -q -e '[^0-9]' ; then
   # -d value is invalid
-  echo "Invalid \"Record minute\"" >&2
-  finalize
+  echo 'Invalid "Record minute"' >&2
   exit 1
 fi
 
 # Calculate totime (-d option)
 if [ -n "${duration}" ]; then
   # Compare -t value and -d value
-  utime_to1=${utime_to}
   utime_to2=$((utime_from + (duration * 60)))
 
-  if [ "${utime_to1}" -lt ${utime_to2} ]; then
+  if [ "${utime_to}" -lt ${utime_to2} ]; then
     # Set -d value
     utime_to=${utime_to2}
   fi
@@ -443,59 +524,18 @@ if [ -n "${duration}" ]; then
 fi
 
 # Login premium
+radiko_session=
 if [ -n "${mail}" ]; then
-  login "${mail}" "${password}"
-  ret=$?
-
-  if [ ${ret} -ne 0 ]; then
-    echo "Cannot login Radiko premium" >&2
-    finalize
+  if ! radiko_session=$(radiko_login "${mail}" "${password}") ; then
+    echo 'Cannot login Radiko premium' >&2
     exit 1
   fi
 fi
 
-# Authorize 1
-auth1_res=$(curl \
-    --silent \
-    --header "X-Radiko-App: pc_html5" \
-    --header "X-Radiko-App-Version: 0.0.1" \
-    --header "X-Radiko-Device: pc" \
-    --header "X-Radiko-User: dummy_user" \
-    --dump-header - \
-    --output /dev/null \
-    "https://radiko.jp/v2/api/auth1")
-
-# Get partial key
-authtoken=$(echo "${auth1_res}" | awk 'tolower($0) ~/^x-radiko-authtoken: / {print substr($0,21,length($0)-21)}')
-keyoffset=$(echo "${auth1_res}" | awk 'tolower($0) ~/^x-radiko-keyoffset: / {print substr($0,21,length($0)-21)}')
-keylength=$(echo "${auth1_res}" | awk 'tolower($0) ~/^x-radiko-keylength: / {print substr($0,21,length($0)-21)}')
-
-if [ -z "${authtoken}" ] || [ -z "${keyoffset}" ] || [ -z "${keylength}" ]; then
-  echo "auth1 failed" >&2
-  finalize
-  exit 1
-fi
-
-partialkey=$(echo "${AUTHKEY_VALUE}" | dd bs=1 "skip=${keyoffset}" "count=${keylength}" 2> /dev/null | base64)
-
-# Authorize 2
-auth2_url_param=""
-if [ -n "${radiko_session}" ]; then
-  auth2_url_param="?radiko_session=${radiko_session}"
-fi
-curl \
-    --silent \
-    --header "X-Radiko-Device: pc" \
-    --header "X-Radiko-User: dummy_user" \
-    --header "X-Radiko-AuthToken: ${authtoken}" \
-    --header "X-Radiko-PartialKey: ${partialkey}" \
-    --output /dev/null \
-    "https://radiko.jp/v2/api/auth2${auth2_url_param}"
-ret=$?
-
-if [ ${ret} -ne 0 ]; then
-  echo "auth2 failed" >&2
-  finalize
+# Authorize
+if ! authtoken=$(radiko_auth "${radiko_session}") ; then
+  echo 'auth failed' >&2
+  radiko_logout "${radiko_session}"
   exit 1
 fi
 
@@ -504,20 +544,17 @@ if [ -z "${output}" ]; then
   output="${station_id}_${fromtime}_${totime}.m4a"
 else
   # Fix file path extension
-  echo "${output}" | grep -q "\\.m4a$"
-  ret=$?
-
-  if [ ${ret} -ne 0 ]; then
+  if ! echo "${output}" | grep -q -e '\.m4a$' ; then
     # Add .m4a
     output="${output}.m4a"
   fi
 fi
 
 # Generate pseudo random MD5 hash values (tracking key?)
-lsid=$(head -c 100 /dev/random | base64 | tr -dc '0-9A-Fa-f' | tr '[:upper:]' '[:lower:]' | cut -c 1-32)
+lsid=$(head -n 5 /dev/random | b64_enc | tr -dc '0-9a-f' | cut -c 1-32)
 
 # Record
-ffmpeg \
+if ! ffmpeg \
     -loglevel error \
     -fflags +discardcorrupt \
     -headers "X-Radiko-Authtoken: ${authtoken}" \
@@ -526,15 +563,12 @@ ffmpeg \
     -vn \
     -bsf:a aac_adtstoasc \
     -y \
-    "${output}"
-ret=$?
-
-if [ ${ret} -ne 0 ]; then
-  echo "Record failed" >&2
-  finalize
+    "${output}" ; then
+  echo 'Record failed' >&2
+  radiko_logout "${radiko_session}"
   exit 1
 fi
 
 # Finish
-finalize
+radiko_logout "${radiko_session}"
 exit 0
