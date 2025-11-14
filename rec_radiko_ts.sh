@@ -20,8 +20,8 @@ show_usage() {
 Usage: $(basename "$0") [options]
 Options:
   -s STATION      Station ID
-  -f DATETIME     Record start datetime (%Y%m%d%H%M format, JST)
-  -t DATETIME     Record end datetime (%Y%m%d%H%M format, JST)
+  -f DATETIME     Record start datetime (%Y%m%d%H%M or %Y%m%d%H%M%S or %H%M or %H%M%S format, JST)
+  -t DATETIME     Record end datetime (%Y%m%d%H%M or %Y%m%d%H%M%S or %H%M or %H%M%S format, JST)
   -d MINUTE       Record minute
   -u URL          Set -s, -f, -t option values from timefree program URL
   -m ADDRESS      Radiko premium mail address
@@ -141,14 +141,14 @@ radiko_logout() {
 #######################################
 # Convert UNIX time
 # Arguments:
-#   datetime string (%Y%m%d%H%M format)
+#   datetime string (%Y%m%d%H%M[%S] format)
 # Returns:
 #   0: Success
 #   1: Failed
 #######################################
 to_unixtime() {
   # for gawk
-  #utime=$(echo "$1" | gawk '{ print mktime(sprintf("%d %d %d %d %d 0", substr($0, 0, 4), substr($0, 5, 2), substr($0, 7, 2), substr($0, 9, 2), substr($0, 11, 2)), 1) - 32400 }')
+  #utime=$(echo "$1" | gawk '{ print mktime(sprintf("%d %d %d %d %d %d", substr($0, 0, 4), substr($0, 5, 2), substr($0, 7, 2), substr($0, 9, 2), substr($0, 11, 2), ((length($0) == 14) ? substr($0, 13, 2) : 0)), 1) - 32400 }')
 
   utime=$(echo "$1" \
     | awk '{
@@ -160,7 +160,7 @@ to_unixtime() {
         exit;
       }
 
-      if (length(date_str) != 12) {
+      if (length(date_str) != 12 && length(date_str) != 14) {
         # Invalid length
         print -1;
         exit;
@@ -172,7 +172,7 @@ to_unixtime() {
       day = substr(date_str, 7, 2) - 0;
       hour = substr(date_str, 9, 2) - 0;
       minute = substr(date_str, 11, 2) - 0;
-      second = 0;
+      second = (length(date_str) == 14) ? substr(date_str, 13, 2) - 0 : 0;
 
       # Validation parts
       if ((year < 1970) || (month < 1) || (month > 12) || (hour < 0) || (hour > 23) \
@@ -217,7 +217,7 @@ to_unixtime() {
 #######################################
 to_datetime() {
   # for gawk
-  #datetime=$(echo "$1" | gawk '{ print strftime("%Y%m%d%H%M", int($0) + 32400, 1) }')
+  #datetime=$(echo "$1" | gawk '{ print strftime("%Y%m%d%H%M%S", int($0) + 32400, 1) }')
 
   datetime=$(echo "$1" \
     | awk '{
@@ -258,7 +258,7 @@ to_datetime() {
         }
       }
 
-      printf("%04d%02d%02d%02d%02d", year, month, day, hour, minute);
+      printf("%04d%02d%02d%02d%02d%02d", year, month, day, hour, minute, second);
     }')
 
   echo "${datetime}"
@@ -291,16 +291,46 @@ extract_url_params() {
   url=$1
 
   # Extract station ID and record start datetime
-  station_id=$(echo "${url}" | sed -n 's;https\{0,1\}://radiko\.jp/#!/ts/\(.\{1,\}\)/[0-9]\{14,14\}$;\1;p')
-  ft=$(echo "${url}" | sed -n 's;^https\{0,1\}://radiko\.jp/#!/ts/.\{1,\}/\([0-9]\{14,14\}\)$;\1;p')
-  fromtime=$(echo "${ft}" | cut -c 1-12)
+  station_id=
+  fromtime=
+  if echo "${url}" | grep -q -e '^https\{0,1\}://radiko\.jp/#!/ts/' ; then
+    # "https://radiko.jp/#!/ts/{station_id}/{fromtime}"
+    station_id=$(echo "${url}" | sed -n 's;https\{0,1\}://radiko\.jp/#!/ts/\(.\{1,\}\)/[0-9]\{14,14\}$;\1;p')
+    fromtime=$(echo "${url}" | sed -n 's;^https\{0,1\}://radiko\.jp/#!/ts/.\{1,\}/\([0-9]\{14,14\}\)$;\1;p')
+  elif echo "${url}" | grep -q -e '^https\{0,1\}://radiko\.jp/share/' ; then
+    # "https://radiko.jp/share/?t={fromtime}&sid={station_id}"
+    station_id=$(echo "${url}" | sed -n 's;https\{0,1\}://radiko\.jp/share/.*[?&]sid=\([^&]\{1,\}\).*;\1;p')
+    fromtime=$(echo "${url}" | sed -n 's;https\{0,1\}://radiko\.jp/share/.*[?&]t=\([0-9]\{1,14\}\).*;\1;p')
+
+    # 24:00-28:59 -> next day 0:00-4:59
+    if echo "${fromtime}" | grep -q -e '^[0-9]\{8,8\}2[4-8]' ; then
+      utime_date=$(($(to_unixtime "$(echo "${fromtime}" | cut -c 1-8)000000") + 86400))
+      utime_hour=$((($(echo "${fromtime}" | awk '{print substr($0,9,2)}') - 24) * 3600))
+      utime_minute=$(($(echo "${fromtime}" | awk '{print substr($0,11,2)}') * 60))
+      utime_second=$(($(echo "${fromtime}" | awk '{print substr($0,13,2)}') - 0))
+
+      utime=$((utime_date + utime_hour + utime_minute + utime_second))
+      fromtime=$(to_datetime "${utime}")
+    fi
+  fi
+
   if [ -z "${station_id}" ] || [ -z "${fromtime}" ]; then
     return 1
   fi
 
+  # Extract station area_id
+  area_id=$(curl --silent 'https://radiko.jp/v3/station/region/full.xml' \
+    | xmllint --xpath "/region/stations/station[id='${station_id}']/area_id/text()" -)
+  if [ -z "${area_id}" ]; then
+    return 1
+  fi
+
+  # Target program date (0:00-4:59 -> previous day)
+  program_date=$(to_datetime "$(($(to_unixtime "${fromtime}") - 18000))" | cut -c 1-8)
+
   # Extract record end datetime
-  totime=$(curl --silent "https://radiko.jp/v3/program/station/weekly/${station_id}.xml" \
-    | xmllint --xpath "substring(string(/radiko/stations/station[@id='${station_id}']/progs/prog[@ft='${ft}']/@to), 1, 12)" -)
+  totime=$(curl --silent "https://api.radiko.jp/program/v3/date/${program_date}/area/${area_id}.xml" \
+    | xmllint --xpath "string((/radiko/stations/station[@id='${station_id}']/progs/prog[@ft<='${fromtime}'])[last()]/@to)" -)
   if [ -z "${totime}" ]; then
     return 1
   fi
@@ -448,6 +478,14 @@ while getopts s:f:t:d:m:u:p:o:l option; do
   esac
 done
 
+# DateTime string completion
+if echo "${fromtime}" | grep -q -E -e '^([0-1][0-9]|2[0-3])[0-5][0-9]([0-5][0-9]){0,1}$' ; then
+  fromtime="$(date '+%Y%m%d')${fromtime}"
+fi
+if echo "${totime}" | grep -q -E -e '^([0-1][0-9]|2[0-3])[0-5][0-9]([0-5][0-9]){0,1}$' ; then
+  totime="$(date '+%Y%m%d')${totime}"
+fi
+
 # Get program infomation from URL (-u option)
 if [ -n "${url}" ]; then
   if ! url_params=$(extract_url_params "${url}") ; then
@@ -523,6 +561,14 @@ if [ -n "${duration}" ]; then
   totime=$(to_datetime "${utime_to}")
 fi
 
+# Second string completion
+if echo "${fromtime}" | grep -q -e '^[0-9]\{12,12\}$' ; then
+  fromtime="${fromtime}00"
+fi
+if echo "${totime}" | grep -q -e '^[0-9]\{12,12\}$' ; then
+  totime="${totime}00"
+fi
+
 # Login premium
 radiko_session=
 if [ -n "${mail}" ]; then
@@ -583,7 +629,7 @@ if ! ffmpeg \
     -loglevel error \
     -fflags +discardcorrupt \
     -headers "X-Radiko-Authtoken: ${authtoken}" \
-    -i "https://radiko.jp/v2/api/ts/playlist.m3u8?station_id=${station_id}&start_at=${fromtime}00&ft=${fromtime}00&end_at=${totime}00&to=${totime}00&seek=${fromtime}00&l=15&lsid=${lsid}&type=c" \
+    -i "https://radiko.jp/v2/api/ts/playlist.m3u8?station_id=${station_id}&start_at=${fromtime}&ft=${fromtime}&end_at=${totime}&to=${totime}&seek=${fromtime}&l=15&lsid=${lsid}&type=c" \
     -acodec copy \
     -vn \
     -bsf:a aac_adtstoasc \
