@@ -57,12 +57,18 @@ radiko_login() {
   # Extract login result
   radiko_session=$(echo "${login_json}" | extract_login_value 'radiko_session')
 
+  # Join areafree?
+  is_areafree='0'
+  if [ "$(echo "${login_json}" | extract_login_value 'areafree')" = '1' ]; then
+    is_areafree='1'
+  fi
+
   # Check login
   if [ -z "${radiko_session}" ]; then
     return 1
   fi
 
-  echo "${radiko_session}"
+  echo "${radiko_session},${is_areafree}"
   return 0
 }
 
@@ -394,7 +400,10 @@ radiko_auth() {
     return 1
   fi
 
-  echo "${authtoken}"
+  # Detected area ID (prefecture)
+  area_id=$(echo "${auth2_res}" | head -n 1 | cut -d ',' -f1)
+
+  echo "${authtoken},${area_id}"
   return 0
 }
 
@@ -422,6 +431,35 @@ b64_enc() {
     return 1
   fi
   return 0
+}
+
+#######################################
+# Get HLS playlist URL list
+# Arguments:
+#   Station ID
+#   Join area free flag
+# Returns:
+#   0: Success
+#   1: Failed
+#######################################
+get_hls_urls() {
+  station_id=$1
+  is_areafree=$2
+
+  # Default playlist (not TimeFree 30)
+  echo 'https://radiko.jp/v2/api/ts/playlist.m3u8'
+
+  areafree='0'
+  if [ "${is_areafree}" = '1' ]; then
+    areafree='1'
+  fi
+
+  # TimeFree 30 playlist
+  #  1st line: "Invalid data found when processing input" (Internal HTTP 404 error)
+  #  2nd line: Very slowly (Possibly bandwidth limited)
+  curl --silent "https://radiko.jp/v3/station/stream/pc_html5/${station_id}.xml" \
+    | xmllint --xpath "/urls/url[@timefree='1' and @areafree='${areafree}']/playlist_create_url/text()" - \
+    | tr -d '\r'
 }
 
 # Define argument values
@@ -571,12 +609,15 @@ fi
 
 # Login premium
 radiko_session=
+is_areafree=
 if [ -n "${mail}" ]; then
   i=1
   while : ; do
     # Max 3 times
-    if radiko_session=$(radiko_login "${mail}" "${password}") ; then
+    if res=$(radiko_login "${mail}" "${password}") ; then
       # Success
+      radiko_session=$(echo "${res}" | cut -d ',' -f1)
+      is_areafree=$(echo "${res}" | cut -d ',' -f2)
       break
     fi
 
@@ -592,11 +633,14 @@ fi
 
 # Authorize
 authtoken=
+area_id=
 i=1
 while : ; do
   # Max 3 times
-  if authtoken=$(radiko_auth "${radiko_session}") ; then
+  if res=$(radiko_auth "${radiko_session}") ; then
     # Success
+    authtoken=$(echo "${res}" | cut -d ',' -f1)
+    area_id=$(echo "${res}" | cut -d ',' -f2)
     break
   fi
 
@@ -625,16 +669,25 @@ fi
 lsid=$(head -n 5 /dev/random | b64_enc | tr -dc '0-9a-f' | cut -c 1-32)
 
 # Record
-if ! ffmpeg \
-    -loglevel error \
-    -fflags +discardcorrupt \
-    -headers "X-Radiko-Authtoken: ${authtoken}" \
-    -i "https://radiko.jp/v2/api/ts/playlist.m3u8?station_id=${station_id}&start_at=${fromtime}&ft=${fromtime}&end_at=${totime}&to=${totime}&seek=${fromtime}&l=15&lsid=${lsid}&type=c" \
-    -acodec copy \
-    -vn \
-    -bsf:a aac_adtstoasc \
-    -y \
-    "${output}" ; then
+record_success='0'
+ffmpeg_header=$(printf 'X-Radiko-Authtoken: %s\r\nX-Radiko-AreaId: %s' "${authtoken}" "${area_id}")
+for hls_url in $(get_hls_urls "${station_id}" "${is_areafree}"); do
+  if ffmpeg \
+      -nostdin \
+      -loglevel quiet \
+      -fflags +discardcorrupt \
+      -headers "${ffmpeg_header}" \
+      -i "${hls_url}?station_id=${station_id}&start_at=${fromtime}&ft=${fromtime}&end_at=${totime}&to=${totime}&seek=${fromtime}&l=15&lsid=${lsid}&type=c" \
+      -acodec copy \
+      -vn \
+      -bsf:a aac_adtstoasc \
+      -y \
+      "${output}" ; then
+    record_success='1'
+    break
+  fi
+done
+if [ "${record_success}" != '1' ]; then
   echo 'Record failed' >&2
   radiko_logout "${radiko_session}"
   exit 1
