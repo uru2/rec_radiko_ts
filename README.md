@@ -20,8 +20,8 @@ $ ./rec_radiko_ts.sh [options]
 |-t _DATETIME_|△<sup>[*1](#param_note1)</sup>|終了日時|書式は `-f` と同じ <sup>[*2](#param_note2)</sup>|
 |-d _MINUTE_|△<sup>[*1](#param_note1)</sup>|録音時間(分)|`-f` で指定した時間に加算することで終了日時を計算する <sup>[*2](#param_note2)</sup>|
 |-u _URL_||番組URL|ラジコサイトの番組表から番組詳細ページへ移動したあとのURL、またはシェアラジコURLから `-s` `-f` `-t` の値を自動で取得する|
-|-m _MAIL_||ラジコプレミアム メールアドレス||
-|-p _PASSWORD_||ラジコプレミアム パスワード||
+|-m _MAIL_||ラジコプレミアム メールアドレス|環境変数 `RADIKO_MAIL` があれば自動指定されます|
+|-p _PASSWORD_||ラジコプレミアム パスワード|環境変数 `RADIKO_PASSWORD` があれば自動指定されます|
 |-o _PATH_||出力パス|未指定の場合カレントディレクトリに `放送局ID_開始日時_終了日時.m4a` というファイルを作成|
 |-l||放送局ID・名称表示||
 
@@ -37,6 +37,11 @@ $ ./rec_radiko_ts.sh -s RN1 -f 201705020825 -t 201705020835 -o "/hoge/2017-05-02
 
 # エリア外の局 (エリアフリー)
 $ ./rec_radiko_ts.sh -s YBC -f 201704300855 -t 201704300900 -o "/hoge/2017-04-30 ラジオで詰め将棋.m4a" -m "foo@example.com" -p "password"
+
+# エリア外の局 (エリアフリー 環境変数からログイン情報設定)
+$ export RADIKO_MAIL="foo@example.com"
+$ export RADIKO_PASSWORD="password"
+$ ./rec_radiko_ts.sh -s YBC -f 201704300855 -t 201704300900 -o "/hoge/2017-04-30 ラジオで詰め将棋.m4a"
 
 # 終了日時ではなく録音時間で指定
 $ ./rec_radiko_ts.sh -s RN1 -f 201705020825 -d 10

@@ -468,8 +468,8 @@ fromtime=
 totime=
 duration=
 url=
-mail=
-password=
+mail="${RADIKO_MAIL:-}"
+password="${RADIKO_PASSWORD:-}"
 output=
 
 # Argument none?
