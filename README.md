@@ -82,6 +82,28 @@ $ ./rec_radiko_ts.sh -s RN2 -f 0900 -t 090351
     - プレイリストAPIでは5秒単位で時間指定できますが、時間の差を1〜5秒に指定した場合はきちんと5秒のデータが作成されます。 ~~(やっぱりこれバグじゃない?)~~
 - タイムフリー30対象となる期間(30日前から8日前まで)の番組保存は **おまけ機能のため将来的なサポートは期待しないでください。**
   - 保存が非常に遅い(実放送時間分かかる)、または保存失敗となる可能性があります。
+- FFmpeg 4.3未満の場合には ffmpeg コマンドの `-http_seekable 0` 引数を削除してください。
+
+
+## 実験的機能
+※不具合がある可能性があります!!!
+
+環境変数 `RADIKO_CHUNK_DL=1` を設定すると新プレイリスト仕様に特化したモードで動作します。  
+具体的にはタイムフリー30対象となる期間の番組保存が高速化します。  
+<small>将来的にはこのモードでしか保存できなくなるかも…</small>
+
+このモードでの注意点等を示します。
+
+- `-t` や `-d` 、 `-u` で指定する終了日時はスクリプト実行時刻から150秒以上空けてください。
+  - 十分でない間隔の場合には実行に時間がかかる、また音声の内容がおかしくなります。 (途中で音が飛ぶ、番組内容がいきなり差し替わったように聞こえます)
+- `/tmp` または環境変数 `TMPDIR` に設定したディレクトリに一時ファイルを作成するので空き容量には気をつけてください。
+  - 実行中は `recradikots_*` という一時ファイルを作成します。
+
+前述の通り実験的機能のため下記にように必要なときのみ指定することを推奨します。
+
+```
+$ RADIKO_CHUNK_DL=1 ./rec_radiko_ts.sh -s STV -f 202512070000 -d 60 -m "foo@example.com" -p "password"
+```
 
 
 ##  作った人
@@ -95,9 +117,10 @@ $ ./rec_radiko_ts.sh -s RN2 -f 0900 -t 090351
 ## 謝辞
 下記のソースコード・情報を参考にさせていただきました。
 
-- https://github.com/ez-design/RTFree
+- ~~https://github.com/ez-design/RTFree~~
 - http://kyoshiaki.hatenablog.com/entry/2014/05/04/184748
-- http://mizukifu.blog29.fc2.com/blog-entry-1429.html
+- ~~http://mizukifu.blog29.fc2.com/blog-entry-1429.html~~
 - https://github.com/ShellShoccar-jpn/misc-tools/blob/master/utconv
+- [@garret1317](https://github.com/garret1317/) 氏による [issue #2](https://github.com/uru2/rec_radiko_ts/issues/2)
 
 RTFreeは実装方法および .NET Core 入れて動かすのちょっとなぁ…という気持ちにさせてくれたという意味で特に感謝しております。
