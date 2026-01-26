@@ -1,7 +1,7 @@
 #!/bin/sh
 #
 # Radiko timefree program recorder
-# Copyright (C) 2017-2025 uru (https://twitter.com/uru_2)
+# Copyright (C) 2017-2026 uru (https://twitter.com/uru_2)
 # License is MIT (see LICENSE file)
 set -eu
 
@@ -446,9 +446,6 @@ get_hls_urls() {
   station_id=$1
   is_areafree=$2
 
-  # Default playlist (not TimeFree 30)
-  echo 'https://radiko.jp/v2/api/ts/playlist.m3u8'
-
   areafree='0'
   if [ "${is_areafree}" = '1' ]; then
     areafree='1'
@@ -671,111 +668,88 @@ lsid=$(head -n 5 /dev/random | b64_enc | tr -dc '0-9a-f' | cut -c 1-32)
 # Record
 record_success='0'
 ffmpeg_header=$(printf 'X-Radiko-Authtoken: %s\r\nX-Radiko-AreaId: %s' "${authtoken}" "${area_id}")
-if [ "${RADIKO_CHUNK_DL:-0}" = '1' ]; then
-  # Chunk download mode
-  chunk_no=0
-  seek_timestamp=$(to_unixtime "${fromtime}")
-  left_sec=$(($(to_unixtime "${totime}") - seek_timestamp))
 
-  # Generate random base filename
-  tmp_dir="$(realpath "${TMPDIR:-/tmp}")"
-  tmp_filebase="recradikots_$(head -n 2 /dev/random | b64_enc | tr -dc '0-9a-zA-Z' | cut -c 1-8)"
-  tmp_pathbase="${tmp_dir}/${tmp_filebase}"
+# Chunk download mode
+chunk_no=0
+seek_timestamp=$(to_unixtime "${fromtime}")
+left_sec=$(($(to_unixtime "${totime}") - seek_timestamp))
 
-  # ffmpeg chunk file list
-  touch "${tmp_pathbase}_filelist.txt"
+# Generate random base filename
+tmp_dir="$(realpath "${TMPDIR:-/tmp}")"
+tmp_filebase="recradikots_$(head -n 2 /dev/random | b64_enc | tr -dc '0-9a-zA-Z' | cut -c 1-8)"
+tmp_pathbase="${tmp_dir}/${tmp_filebase}"
 
-  # New mode playlist only
-  for hls_url in $(get_hls_urls "${station_id}" "${is_areafree}" | sed -e '1d'); do
-    record_success='1'
+# ffmpeg chunk file list
+touch "${tmp_pathbase}_filelist.txt"
 
-    # Split to chunks
-    while [ ${left_sec} -gt 0 ]; do
-      chunk_file="${tmp_pathbase}_chunk${chunk_no}.m4a"
+# New mode playlist only
+for hls_url in $(get_hls_urls "${station_id}" "${is_areafree}" | sed -e '1d'); do
+  record_success='1'
 
-      # Chunk max 300 seconds
-      l=300
-      if [ "${left_sec}" -lt 300 ]; then
-        # 5 second interval
-        if [ "$(($((left_sec % 5))))" -eq 0 ]; then
-          l="${left_sec}"
-        else
-          # Round up to the nearest 5 seconds
-          l="$(($(($((left_sec / 5)) + 1)) * 5))"
-        fi
+  # Split to chunks
+  while [ ${left_sec} -gt 0 ]; do
+    chunk_file="${tmp_pathbase}_chunk${chunk_no}.m4a"
+
+    # Chunk max 300 seconds
+    l=300
+    if [ "${left_sec}" -lt 300 ]; then
+      # 5 second interval
+      if [ "$(($((left_sec % 5))))" -eq 0 ]; then
+        l="${left_sec}"
+      else
+        # Round up to the nearest 5 seconds
+        l="$(($(($((left_sec / 5)) + 1)) * 5))"
       fi
-
-      seek=$(to_datetime "${seek_timestamp}")
-      end_at=$(to_datetime "$((seek_timestamp + l))")
-
-      # chunk download
-      if ! ffmpeg \
-          -nostdin \
-          -loglevel quiet \
-          -fflags +discardcorrupt \
-          -headers "${ffmpeg_header}" \
-          -http_seekable 0 \
-          -seekable 0 \
-          -i "${hls_url}?station_id=${station_id}&start_at=${fromtime}&ft=${fromtime}&seek=${seek}&end_at=${end_at}&to=${end_at}&l=${l}&lsid=${lsid}&type=c" \
-          -acodec copy \
-          -vn \
-          -bsf:a aac_adtstoasc \
-          -y \
-          "${chunk_file}" ; then
-        record_success='0'
-        break
-      fi
-
-      # Append to chunk file list
-      echo "file '${chunk_file}'" >> "${tmp_pathbase}_filelist.txt"
-
-      # chunk duration
-      chunk_sec=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${chunk_file}" \
-        | awk '{printf("%d\n",$1+0.5)}')
-
-      # Next chunk
-      left_sec=$((left_sec - chunk_sec))
-      seek_timestamp=$((seek_timestamp + chunk_sec))
-      chunk_no=$((chunk_no + 1))
-    done
-
-    if [ "${record_success}" = '1' ]; then
-      break
     fi
-  done
 
-  if [ "${record_success}" = '1' ]; then
-    # Concat chunk files (no encoding)
-    if ! ffmpeg -loglevel error -f concat -safe 0 -i "${tmp_pathbase}_filelist.txt" -c copy -y "${output}" ; then
-      record_success='0'
-    fi
-  fi
+    seek=$(to_datetime "${seek_timestamp}")
+    end_at=$(to_datetime "$((seek_timestamp + l))")
 
-  # Cleanup temporary files
-  find "${tmp_dir}" -type d ! -path "${tmp_dir}" -prune -o -type f -name "${tmp_filebase}_*" -exec rm -f {} \; || true
-else
-  # Normal download mode
-  record_success='0'
-
-  for hls_url in $(get_hls_urls "${station_id}" "${is_areafree}"); do
-    if ffmpeg \
+    # chunk download
+    if ! ffmpeg \
         -nostdin \
         -loglevel quiet \
         -fflags +discardcorrupt \
         -headers "${ffmpeg_header}" \
         -http_seekable 0 \
         -seekable 0 \
-        -i "${hls_url}?station_id=${station_id}&start_at=${fromtime}&ft=${fromtime}&end_at=${totime}&to=${totime}&seek=${fromtime}&l=15&lsid=${lsid}&type=c" \
+        -i "${hls_url}?station_id=${station_id}&start_at=${fromtime}&ft=${fromtime}&seek=${seek}&end_at=${end_at}&to=${end_at}&l=${l}&lsid=${lsid}&type=c" \
         -acodec copy \
         -vn \
         -bsf:a aac_adtstoasc \
         -y \
-        "${output}" ; then
-      record_success='1'
+        "${chunk_file}" ; then
+      record_success='0'
       break
     fi
+
+    # Append to chunk file list
+    echo "file '${chunk_file}'" >> "${tmp_pathbase}_filelist.txt"
+
+    # chunk duration
+    chunk_sec=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${chunk_file}" \
+      | awk '{printf("%d\n",$1+0.5)}')
+
+    # Next chunk
+    left_sec=$((left_sec - chunk_sec))
+    seek_timestamp=$((seek_timestamp + chunk_sec))
+    chunk_no=$((chunk_no + 1))
   done
+
+  if [ "${record_success}" = '1' ]; then
+    break
+  fi
+done
+
+if [ "${record_success}" = '1' ]; then
+  # Concat chunk files (no encoding)
+  if ! ffmpeg -loglevel error -f concat -safe 0 -i "${tmp_pathbase}_filelist.txt" -c copy -y "${output}" ; then
+    record_success='0'
+  fi
 fi
+
+# Cleanup temporary files
+find "${tmp_dir}" -type d ! -path "${tmp_dir}" -prune -o -type f -name "${tmp_filebase}_*" -exec rm -f {} \; || true
 
 if [ "${record_success}" != '1' ]; then
   echo 'Record failed' >&2
