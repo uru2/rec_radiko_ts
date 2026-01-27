@@ -683,7 +683,7 @@ tmp_pathbase="${tmp_dir}/${tmp_filebase}"
 touch "${tmp_pathbase}_filelist.txt"
 
 # New mode playlist only
-for hls_url in $(get_hls_urls "${station_id}" "${is_areafree}" | sed -e '1d'); do
+for hls_url in $(get_hls_urls "${station_id}" "${is_areafree}"); do
   record_success='1'
 
   # Split to chunks
