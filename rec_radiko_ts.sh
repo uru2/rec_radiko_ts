@@ -27,7 +27,7 @@ Options:
   -m ADDRESS      Radiko premium mail address
   -p PASSWORD     Radiko premium password
   -o FILEPATH     Output file path
-  -l              Show station ID and name
+  -l              Show station ID, name and delay seconds
 _EOT_
 }
 
@@ -272,7 +272,7 @@ to_datetime() {
 }
 
 #######################################
-# Show all station ID and name
+# Show all station ID, name and delay seconds
 # Arguments:
 #   None
 # Returns:
@@ -281,8 +281,8 @@ to_datetime() {
 show_all_stations() {
   # Format to "{id}:{name}"
   curl --silent 'https://radiko.jp/v3/station/region/full.xml' \
-    | xmllint --xpath '/region/stations/station[timefree="1"]/id/text() | /region/stations/station[timefree="1"]/name/text()' - \
-    | paste -d ':' - -
+    | xmllint --xpath '/region/stations/station[timefree="1"]/id/text() | /region/stations/station[timefree="1"]/name/text() | /region/stations/station[timefree="1"]/tf_max_delay/text()' - \
+    | paste -d ':' - - -
 }
 
 #######################################
