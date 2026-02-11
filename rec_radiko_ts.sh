@@ -708,7 +708,7 @@ for hls_url in $(get_hls_urls "${station_id}" "${is_areafree}"); do
     # chunk download
     if ! ffmpeg \
         -nostdin \
-        -loglevel quiet \
+        -loglevel error \
         -fflags +discardcorrupt \
         -headers "${ffmpeg_header}" \
         -http_seekable 0 \
