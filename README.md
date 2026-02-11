@@ -64,16 +64,16 @@ $ ./rec_radiko_ts.sh -s RN2 -f 0900 -t 090351
 
 
 ## 動作確認環境
-- Ubuntu 16.04.2
-    - curl 7.47.0
-    - xmllint using libxml version 20903
-    - ffmpeg 3.3.3-1ubuntu1~16.04.york0
-- FreeBSD 11.0-RELEASE
-    - curl 7.55.1
-    - xmllint using libxml version 20904
-    - ffmpeg 3.3.3
+- FreeBSD 15.0-RELEASE
+    - curl 8.17.0
+    - xmllint using libxml version 21501
+    - ffmpeg 8.0.1
+- Debian 12.13
+    - curl 7.88.1
+    - xmllint using libxml version 20914
+    - ffmpeg 5.1.8-0+deb12u1
 
-余談ですが、Windows 10 Creators UpdateビルドでのWindows Subsystem for LinuxのUbuntuでも動作します。
+Windows Subsystem for Linux(WSL)上にLinux実行環境を構築しても動作します。
 
 
 ## 注意事項など
@@ -87,6 +87,22 @@ $ ./rec_radiko_ts.sh -s RN2 -f 0900 -t 090351
   - 必要な秒数は `-l` オプションで確認
 - `/tmp` または環境変数 `TMPDIR` に設定したディレクトリに一時ファイルを作成するので空き容量には気をつけてください。
   - 実行中は `recradikots_*` という一時ファイルを作成します。
+- libxml2 v2.9.8以下(xmllintバージョン表記が20908以下)には不具合があります。
+  - `-l` オプションは利用できません。
+  - スクリプト中 `get_hls_urls` の一部を下記に差し替えてください。
+```
+  # TimeFree 30 playlist (Possibly bandwidth limited)
+  #  1st line: Main playlist, requires the "-http_seekable 0" option in ffmpeg >= 4.3 (Suppresses HTTP "Range" request headers)
+  #  2nd line: Sub playlist
+  # libxml2 v2.9.8 or earlier bug hack
+  playlist_res=$(curl --silent "https://radiko.jp/v3/station/stream/pc_html5/${station_id}.xml")
+  counts=$(echo "${playlist_res}" | xmllint --xpath "count(/urls/url[@timefree='1' and @areafree='${areafree}']/playlist_create_url)" -)
+  i=1
+  while [ "${i}" -le "${counts}" ]; do
+    echo "${playlist_res}" | xmllint --xpath "(/urls/url[@timefree='1' and @areafree='${areafree}']/playlist_create_url/text())[${i}]" - | printf '%s\n' "$(cat)"
+    i=$((i + 1))
+  done
+```
 
 
 ##  作った人
