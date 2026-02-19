@@ -459,6 +459,27 @@ get_hls_urls() {
     | tr -d '\r'
 }
 
+#######################################
+# Create a temporary directory
+# Arguments:
+#   None
+# Returns:
+#   0: Success
+#   1: Failed
+#######################################
+mk_temp_dir() {
+  # Alternative to "mktemp -d"
+  tmp_dir="$(realpath "${TMPDIR:-/tmp}")/recradikots_$(head -n 2 /dev/random | b64_enc | tr -dc '0-9a-zA-Z' | cut -c 1-8)"
+  if [ -d "${tmp_dir}" ]; then
+    echo "Already exists ${tmp_dir}" >&2
+    return 1
+  fi
+
+  mkdir -p "${tmp_dir}"
+  echo "${tmp_dir}"
+  return 0
+}
+
 # Define argument values
 station_id=
 fromtime=
@@ -674,13 +695,11 @@ chunk_no=0
 seek_timestamp=$(to_unixtime "${fromtime}")
 left_sec=$(($(to_unixtime "${totime}") - seek_timestamp))
 
-# Generate random base filename
-tmp_dir="$(realpath "${TMPDIR:-/tmp}")"
-tmp_filebase="recradikots_$(head -n 2 /dev/random | b64_enc | tr -dc '0-9a-zA-Z' | cut -c 1-8)"
-tmp_pathbase="${tmp_dir}/${tmp_filebase}"
+# Generate temporary directory
+tmp_dir="$(mk_temp_dir)"
 
 # ffmpeg chunk file list
-touch "${tmp_pathbase}_filelist.txt"
+touch "${tmp_dir}/filelist.txt"
 
 # New mode playlist only
 for hls_url in $(get_hls_urls "${station_id}" "${is_areafree}"); do
@@ -688,7 +707,7 @@ for hls_url in $(get_hls_urls "${station_id}" "${is_areafree}"); do
 
   # Split to chunks
   while [ ${left_sec} -gt 0 ]; do
-    chunk_file="${tmp_pathbase}_chunk${chunk_no}.m4a"
+    chunk_file="${tmp_dir}/chunk${chunk_no}.m4a"
 
     # Chunk max 300 seconds
     l=300
@@ -724,7 +743,7 @@ for hls_url in $(get_hls_urls "${station_id}" "${is_areafree}"); do
     fi
 
     # Append to chunk file list
-    echo "file '${chunk_file}'" >> "${tmp_pathbase}_filelist.txt"
+    echo "file '${chunk_file}'" >> "${tmp_dir}/filelist.txt"
 
     # chunk duration
     chunk_sec=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${chunk_file}" \
@@ -743,13 +762,13 @@ done
 
 if [ "${record_success}" = '1' ]; then
   # Concat chunk files (no encoding)
-  if ! ffmpeg -loglevel error -f concat -safe 0 -i "${tmp_pathbase}_filelist.txt" -c copy -y "${output}" ; then
+  if ! ffmpeg -loglevel error -f concat -safe 0 -i "${tmp_dir}/filelist.txt" -c copy -y "${output}" ; then
     record_success='0'
   fi
 fi
 
-# Cleanup temporary files
-find "${tmp_dir}" -type d ! -path "${tmp_dir}" -prune -o -type f -name "${tmp_filebase}_*" -exec rm -f {} \; || true
+# Cleanup temporary directory
+rm -rf "${tmp_dir}"
 
 if [ "${record_success}" != '1' ]; then
   echo 'Record failed' >&2
