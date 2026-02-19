@@ -416,15 +416,15 @@ radiko_auth() {
 #   1: Failed
 #######################################
 b64_enc() {
-  if which base64 > /dev/null 2>&1 ; then
+  if command -v base64 > /dev/null ; then
     base64
-  elif which basenc > /dev/null 2>&1 ; then
+  elif command -v basenc > /dev/null ; then
     basenc --base64 -
-  elif which openssl > /dev/null 2>&1 ; then
+  elif command -v openssl > /dev/null ; then
     openssl enc -base64
-  elif which uuencode > /dev/null 2>&1 ; then
+  elif command -v uuencode > /dev/nul ; then
     uuencode -m - | sed -e '1d' -e '$d'
-  elif which b64encode > /dev/null 2>&1 ; then
+  elif command -v b64encode > /dev/null ; then
     b64encode - | sed -e '1d' -e '$d'
   else
     echo 'base64, basenc, openssl, uuencode, b64encode commands not found.' >&2
