@@ -422,7 +422,7 @@ b64_enc() {
     basenc --base64 -
   elif command -v openssl > /dev/null ; then
     openssl enc -base64
-  elif command -v uuencode > /dev/nul ; then
+  elif command -v uuencode > /dev/null ; then
     uuencode -m - | sed -e '1d' -e '$d'
   elif command -v b64encode > /dev/null ; then
     b64encode - | sed -e '1d' -e '$d'
