@@ -311,9 +311,9 @@ extract_url_params() {
     # 24:00-28:59 -> next day 0:00-4:59
     if echo "${fromtime}" | grep -q -e '^[0-9]\{8,8\}2[4-8]' ; then
       utime_date=$(($(to_unixtime "$(echo "${fromtime}" | cut -c 1-8)000000") + 86400))
-      utime_hour=$((($(echo "${fromtime}" | awk '{print substr($0,9,2)}') - 24) * 3600))
-      utime_minute=$(($(echo "${fromtime}" | awk '{print substr($0,11,2)}') * 60))
-      utime_second=$(($(echo "${fromtime}" | awk '{print substr($0,13,2)}') - 0))
+      utime_hour=$((($(echo "${fromtime}" | cut -c 9-10) - 24) * 3600))
+      utime_minute=$(($(echo "${fromtime}" | cut -c 11-12) * 60))
+      utime_second=$(($(echo "${fromtime}" | cut -c 13-14) - 0))
 
       utime=$((utime_date + utime_hour + utime_minute + utime_second))
       fromtime=$(to_datetime "${utime}")
