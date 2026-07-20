@@ -286,6 +286,60 @@ show_all_stations() {
 }
 
 #######################################
+# Get program title and end datetime for a station and start datetime.
+# Consecutive program table entries that share the same title (e.g. a long
+# program split into multiple listing blocks) are merged, so the returned
+# end datetime covers the whole broadcast.
+# Arguments:
+#   Station ID
+#   Record start datetime (%Y%m%d%H%M%S format)
+# Returns:
+#   0: Success (echo "title\ntotime")
+#   1: Failed
+#######################################
+get_program_info() {
+  station_id=$1
+  fromtime=$2
+
+  # Extract station area_id
+  area_id=$(curl --silent 'https://radiko.jp/v3/station/region/full.xml' \
+    | xmllint --xpath "/region/stations/station[id='${station_id}']/area_id/text()" -)
+  if [ -z "${area_id}" ]; then
+    return 1
+  fi
+
+  # Target program date (0:00-4:59 -> previous day)
+  program_date=$(to_datetime "$(($(to_unixtime "${fromtime}") - 18000))" | cut -c 1-8)
+
+  program_xml=$(curl --silent "https://api.radiko.jp/program/v3/date/${program_date}/area/${area_id}.xml")
+
+  # Extract title and end datetime of the program covering fromtime
+  title=$(echo "${program_xml}" \
+    | xmllint --xpath "string((/radiko/stations/station[@id='${station_id}']/progs/prog[@ft<='${fromtime}'])[last()]/title/text())" -)
+  totime=$(echo "${program_xml}" \
+    | xmllint --xpath "string((/radiko/stations/station[@id='${station_id}']/progs/prog[@ft<='${fromtime}'])[last()]/@to)" -)
+  if [ -z "${totime}" ] || [ -z "${title}" ]; then
+    return 1
+  fi
+
+  # Extend end datetime while the immediately following program has the same title
+  # (max 24 blocks as a safety bound against malformed data)
+  merge_count=0
+  while [ "${merge_count}" -lt 24 ]; do
+    next_totime=$(echo "${program_xml}" \
+      | xmllint --xpath "string(/radiko/stations/station[@id='${station_id}']/progs/prog[@ft='${totime}'][title='${title}']/@to)" - 2> /dev/null) || next_totime=
+    if [ -z "${next_totime}" ]; then
+      break
+    fi
+    totime="${next_totime}"
+    merge_count=$((merge_count + 1))
+  done
+
+  printf '%s\n%s\n' "${title}" "${totime}"
+  return 0
+}
+
+#######################################
 # Extract parameters from URL
 # Arguments:
 #   URL
@@ -324,22 +378,11 @@ extract_url_params() {
     return 1
   fi
 
-  # Extract station area_id
-  area_id=$(curl --silent 'https://radiko.jp/v3/station/region/full.xml' \
-    | xmllint --xpath "/region/stations/station[id='${station_id}']/area_id/text()" -)
-  if [ -z "${area_id}" ]; then
+  # Get end datetime (merged across same-title consecutive listing blocks)
+  if ! program_info=$(get_program_info "${station_id}" "${fromtime}") ; then
     return 1
   fi
-
-  # Target program date (0:00-4:59 -> previous day)
-  program_date=$(to_datetime "$(($(to_unixtime "${fromtime}") - 18000))" | cut -c 1-8)
-
-  # Extract record end datetime
-  totime=$(curl --silent "https://api.radiko.jp/program/v3/date/${program_date}/area/${area_id}.xml" \
-    | xmllint --xpath "string((/radiko/stations/station[@id='${station_id}']/progs/prog[@ft<='${fromtime}'])[last()]/@to)" -)
-  if [ -z "${totime}" ]; then
-    return 1
-  fi
+  totime=$(echo "${program_info}" | sed -n '2p')
 
   # Concat parameters
   echo "${station_id},${fromtime},${totime}"
@@ -625,6 +668,32 @@ if echo "${totime}" | grep -q -e '^[0-9]\{12,12\}$' ; then
   totime="${totime}00"
 fi
 
+# Duplicate program check (skip if a program with the same title on the same
+# broadcast day has already been recorded/reserved, even from another station,
+# to avoid an accidental double recording)
+history_dir="${RADIKO_HISTORY_DIR:-${HOME}/.rec_radiko_ts/history}"
+mkdir -p "${history_dir}"
+
+program_title=
+history_file=
+if program_info=$(get_program_info "${station_id}" "${fromtime}") ; then
+  program_title=$(echo "${program_info}" | sed -n '1p')
+fi
+
+if [ -n "${program_title}" ]; then
+  program_date=$(to_datetime "$(($(to_unixtime "${fromtime}") - 18000))" | cut -c 1-8)
+  title_hash=$(echo "${program_title}" | b64_enc | tr -dc '0-9a-zA-Z' | cut -c 1-32)
+  history_file="${history_dir}/${program_date}_${title_hash}"
+
+  if [ -e "${history_file}" ]; then
+    echo "Already recorded (or reserved): ${program_title}" >&2
+    exit 0
+  fi
+
+  # Reserve immediately to block duplicate recording of the same program
+  echo "${program_title}" > "${history_file}"
+fi
+
 # Login premium
 radiko_session=
 is_areafree=
@@ -772,6 +841,10 @@ rm -rf "${tmp_dir}"
 
 if [ "${record_success}" != '1' ]; then
   echo 'Record failed' >&2
+  # Release the reservation so a retry is not blocked by the duplicate check
+  if [ -n "${history_file}" ]; then
+    rm -f "${history_file}"
+  fi
   radiko_logout "${radiko_session}"
   exit 1
 fi
