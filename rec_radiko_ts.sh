@@ -366,7 +366,7 @@ radiko_auth() {
       --header 'X-Radiko-User: dummy_user' \
       --dump-header - \
       --output /dev/null \
-      'https://radiko.jp/v2/api/auth1' \
+      'https://api.radiko.jp/v2/api/auth1' \
     | tr -d '\r') || return 1
 
   # Get partial key
@@ -393,7 +393,7 @@ radiko_auth() {
       --header 'X-Radiko-User: dummy_user' \
       --header "X-Radiko-AuthToken: ${authtoken}" \
       --header "X-Radiko-PartialKey: ${partialkey}" \
-      "https://radiko.jp/v2/api/auth2${auth2_url_param}" \
+      "https://api.radiko.jp/v2/api/auth2${auth2_url_param}" \
     | tr -d '\r') || return 1
   if [ -z "${auth2_res}" ] || [ "${auth2_res}" = 'OUT' ]; then
     # Not detected access area(prefecture) or detected not in Japan
@@ -454,7 +454,7 @@ get_hls_urls() {
   # TimeFree 30 playlist (Possibly bandwidth limited)
   #  1st line: Main playlist, requires the "-http_seekable 0" option in ffmpeg >= 4.3 (Suppresses HTTP "Range" request headers)
   #  2nd line: Sub playlist
-  curl --silent "https://radiko.jp/v3/station/stream/pc_html5/${station_id}.xml" \
+  curl --silent "https://api.radiko.jp/v3/station/stream/pc_html5/${station_id}.xml" \
     | xmllint --xpath "/urls/url[@timefree='1' and @areafree='${areafree}']/playlist_create_url/text()" - \
     | tr -d '\r'
 }
